@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Edge Bookmarks Bar for Google",
+  "version": "1.0",
+  "description": "Exibe a barra de favoritos nativa apenas no Google.com",
+  "permissions": [
+    "bookmarks",
+    "favicon"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://www.google.com/*",
+        "*://www.google.com.br/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["_favicon/*"],
+      "matches": [
+        "*://www.google.com/*",
+        "*://www.google.com.br/*"
+      ]
+    }
+  ]
+}
