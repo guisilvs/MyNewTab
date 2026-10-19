@@ -1,12 +1,25 @@
 {
   "manifest_version": 3,
-  "name": "Edge Bookmarks Bar for Google",
-  "version": "1.0",
-  "description": "Exibe a barra de favoritos nativa apenas no Google.com",
+  "name": "My New Tab",
+  "version": "2.0",
+  "description": "Nova guia ultrarrápida com barra de favoritos Fluent UI integrada ao seu buscador favorito.",
   "permissions": [
     "bookmarks",
-    "favicon"
+    "favicon",
+    "storage",
+    "tabs",
+    "alarms"
   ],
+  "host_permissions": [
+    "*://*.google.com/*",
+    "*://*.google.com.br/*",
+    "*://*.duckduckgo.com/*",
+    "*://*.search.yahoo.com/*",
+    "*://*.search.brave.com/*"
+  ],
+  "chrome_url_overrides": {
+    "newtab": "newtab.html"
+  },
   "background": {
     "service_worker": "background.js"
   },
@@ -14,10 +27,13 @@
     {
       "matches": [
         "*://www.google.com/*",
-        "*://www.google.com.br/*"
+        "*://www.google.com.br/*",
+        "*://duckduckgo.com/*",
+        "*://*.search.yahoo.com/*",
+        "*://search.brave.com/*"
       ],
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [
@@ -25,7 +41,10 @@
       "resources": ["_favicon/*"],
       "matches": [
         "*://www.google.com/*",
-        "*://www.google.com.br/*"
+        "*://www.google.com.br/*",
+        "*://duckduckgo.com/*",
+        "*://*.search.yahoo.com/*",
+        "*://search.brave.com/*"
       ]
     }
   ]
