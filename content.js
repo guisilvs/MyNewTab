@@ -80,7 +80,7 @@
 
   const ICONS = {
     folder: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1.5 3.5C1.5 2.67157 2.17157 2 3 2H6.17157C6.70201 2 7.21071 2.21071 7.58579 2.58579L8.41421 3.41421C8.78929 3.78929 9.29799 4 9.82843 4H13C13.8284 4 14.5 4.67157 14.5 5.5V12.5C14.5 13.3284 13.8284 14 13 14H3C2.17157 14 1.5 13.3284 1.5 12.5V3.5Z" fill="#F5B942" stroke="#D99B26" stroke-width="0.8"/></svg>`,
-    more: `<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.25"/><circle cx="8" cy="8" r="1.25"/><circle cx="12.5" cy="8" r="1.25"/></svg>`,
+    more: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`,
     chevronRight: `<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M4.5 2.25L8.25 6L4.5 9.75" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>`,
     check: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5L6.5 11.5L12.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     starEdit: `<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.5L9.85 5.25L14 5.85L11 8.77L11.7 12.9L8 10.95L4.3 12.9L5 8.77L2 5.85L6.15 5.25L8 1.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>`
@@ -273,17 +273,30 @@
         justify-content: center;
         width: 28px;
         height: 24px;
+        padding: 0;
+        margin: 0;
+        line-height: 0;
+        box-sizing: border-box;
         border-radius: 4px;
         border: none;
         background: transparent;
         color: var(--text-color);
+        opacity: 0.55;
         cursor: pointer;
         flex-shrink: 0;
-        transition: background-color 0.1s ease;
+        transition: background-color 0.1s ease, opacity 0.15s ease;
+      }
+
+      .more-btn svg {
+        width: 15px;
+        height: 15px;
+        display: block;
+        flex-shrink: 0;
       }
 
       .more-btn:hover, .more-btn.active {
         background-color: var(--hover-bg);
+        opacity: 1;
       }
 
       .fluent-menu {
