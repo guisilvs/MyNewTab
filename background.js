@@ -8,16 +8,19 @@ const ENGINES = {
 const DEFAULT_SETTINGS = {
   engine: "google",
   barVisibility: "home_only", // "home_only" | "always" | "never"
-  acceleration: true
+  acceleration: true,
+  themeCache: {} // Memoriza { theme, bgBar } por buscador
 };
 
 let cachedSettings = { ...DEFAULT_SETTINGS };
+let isCacheReady = false;
 
-// Carrega e mantém as configurações em memória para resposta imediata (0ms)
-function syncSettingsCache() {
+function syncSettingsCache(callback) {
   chrome.storage.local.get(DEFAULT_SETTINGS, (res) => {
     cachedSettings = res;
+    isCacheReady = true;
     setupPreWarmer();
+    if (callback) callback(res);
   });
 }
 
@@ -25,6 +28,7 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get(DEFAULT_SETTINGS, (res) => {
     chrome.storage.local.set(res);
     cachedSettings = res;
+    isCacheReady = true;
     setupPreWarmer();
   });
 });
@@ -40,17 +44,26 @@ chrome.storage.onChanged.addListener((changes) => {
   }
 });
 
-// CAMADA 1 DE ACELERAÇÃO: Intercepta a criação da Nova Guia antes da renderização
+// CAMADA 1 DE ACELERAÇÃO: Intercepta a Nova Guia instantaneamente (mesmo se o Service Worker acordar agora)
 chrome.tabs.onCreated.addListener((tab) => {
   const pending = tab.pendingUrl || tab.url || "";
-  if (
-    cachedSettings.acceleration &&
-    (pending.startsWith("edge://newtab") ||
-      pending.startsWith("chrome://newtab") ||
-      pending.includes("newtab.html"))
-  ) {
-    const targetUrl = ENGINES[cachedSettings.engine] || ENGINES.google;
+  const isNewTab =
+    pending.startsWith("edge://newtab") ||
+    pending.startsWith("chrome://newtab") ||
+    pending.includes("newtab.html");
+
+  if (!isNewTab) return;
+
+  const redirectTab = (settings) => {
+    if (!settings.acceleration) return;
+    const targetUrl = ENGINES[settings.engine] || ENGINES.google;
     chrome.tabs.update(tab.id, { url: targetUrl });
+  };
+
+  if (isCacheReady) {
+    redirectTab(cachedSettings);
+  } else {
+    syncSettingsCache(redirectTab);
   }
 });
 
@@ -70,7 +83,7 @@ function setupPreWarmer() {
   chrome.alarms.clear("engineWarmer", () => {
     if (cachedSettings.acceleration) {
       warmUpEngine();
-      chrome.alarms.create("engineWarmer", { periodInMinutes: 0.75 }); // A cada 45s
+      chrome.alarms.create("engineWarmer", { periodInMinutes: 0.75 });
     }
   });
 }
@@ -81,7 +94,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
-// Busca a árvore da Barra de Favoritos
 function fetchBookmarksBar(callback) {
   chrome.bookmarks.getTree((tree) => {
     const bookmarksBar = tree[0]?.children?.[0];
@@ -89,7 +101,6 @@ function fetchBookmarksBar(callback) {
   });
 }
 
-// Atualiza as abas abertas automaticamente se o usuário editar os favoritos
 function notifyBookmarksChanged() {
   fetchBookmarksBar((items) => {
     chrome.tabs.query({}, (tabs) => {
@@ -105,16 +116,19 @@ chrome.bookmarks.onRemoved.addListener(notifyBookmarksChanged);
 chrome.bookmarks.onChanged.addListener(notifyBookmarksChanged);
 chrome.bookmarks.onMoved.addListener(notifyBookmarksChanged);
 
-// Comunicação com o Content Script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "initData") {
-    fetchBookmarksBar((items) => {
-      sendResponse({
-        items,
-        settings: cachedSettings,
-        engines: ENGINES
+    const respond = () => {
+      fetchBookmarksBar((items) => {
+        sendResponse({
+          items,
+          settings: cachedSettings,
+          engines: ENGINES
+        });
       });
-    });
+    };
+    if (isCacheReady) respond();
+    else syncSettingsCache(respond);
     return true;
   }
 

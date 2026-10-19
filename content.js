@@ -1,12 +1,13 @@
 (function () {
   if (window.top !== window.self) return;
 
+  const LOCAL_THEME_KEY = "mnt_cached_theme_v1";
+
   let currentSettings = null;
   let currentBookmarks = [];
   let enginesMap = {};
   let ui = null;
 
-  // Identifica em qual buscador o usuário está no momento
   function detectCurrentEngine() {
     const host = window.location.hostname;
     if (host.includes("google.")) return "google";
@@ -16,7 +17,6 @@
     return null;
   }
 
-  // Verifica se o usuário está na tela inicial de pesquisa (Home) ou na página de resultados
   function isSearchHomePage() {
     const engine = detectCurrentEngine();
     const path = window.location.pathname;
@@ -44,7 +44,40 @@
     return url.toString();
   }
 
-  // Ícones SVG Fluent Design
+  // Lê o tema memorizado anteriormente (0ms via localStorage ou fallback do storage da extensão)
+  function getMemorizedTheme() {
+    const engine = detectCurrentEngine();
+    try {
+      const raw = localStorage.getItem(LOCAL_THEME_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.theme) return parsed;
+      }
+    } catch (e) {}
+
+    if (currentSettings?.themeCache?.[engine]) {
+      return currentSettings.themeCache[engine];
+    }
+    return null;
+  }
+
+  // Memoriza o tema validado para que a próxima abertura já carregue na cor certa
+  function memorizeTheme(themeData) {
+    const engine = detectCurrentEngine();
+    try {
+      localStorage.setItem(LOCAL_THEME_KEY, JSON.stringify(themeData));
+    } catch (e) {}
+
+    if (currentSettings && engine) {
+      const updatedCache = { ...(currentSettings.themeCache || {}), [engine]: themeData };
+      currentSettings.themeCache = updatedCache;
+      chrome.runtime.sendMessage({
+        action: "updateSettings",
+        newSettings: { themeCache: updatedCache }
+      });
+    }
+  }
+
   const ICONS = {
     folder: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1.5 3.5C1.5 2.67157 2.17157 2 3 2H6.17157C6.70201 2 7.21071 2.21071 7.58579 2.58579L8.41421 3.41421C8.78929 3.78929 9.29799 4 9.82843 4H13C13.8284 4 14.5 4.67157 14.5 5.5V12.5C14.5 13.3284 13.8284 14 13 14H3C2.17157 14 1.5 13.3284 1.5 12.5V3.5Z" fill="#F5B942" stroke="#D99B26" stroke-width="0.8"/></svg>`,
     more: `<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.25"/><circle cx="8" cy="8" r="1.25"/><circle cx="12.5" cy="8" r="1.25"/></svg>`,
@@ -53,7 +86,6 @@
     starEdit: `<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.5L9.85 5.25L14 5.85L11 8.77L11.7 12.9L8 10.95L4.3 12.9L5 8.77L2 5.85L6.15 5.25L8 1.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>`
   };
 
-  // Inicializa os dados e monta a barra se estivermos no buscador padrão escolhido
   chrome.runtime.sendMessage({ action: "initData" }, (response) => {
     if (!response) return;
     currentSettings = response.settings;
@@ -63,7 +95,6 @@
     evaluateActivation();
   });
 
-  // Escuta atualizações em tempo real dos favoritos
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === "bookmarksUpdated" && ui) {
       currentBookmarks = msg.items || [];
@@ -97,7 +128,15 @@
     host.id = "mnt-edge-bookmarks-host";
     const shadow = host.attachShadow({ mode: "open" });
 
-    // Estilo que desloca a página suavemente quando a barra está fixa
+    // APLICAÇÃO IMEDIATA DO TEMA MEMORIZADO (Antes de inserir no DOM para evitar qualquer piscada)
+    const memorized = getMemorizedTheme();
+    if (memorized) {
+      host.setAttribute("data-theme", memorized.theme);
+      if (memorized.bgBar) {
+        host.style.setProperty("--bg-bar", memorized.bgBar);
+      }
+    }
+
     const pageStyle = document.createElement("style");
     pageStyle.id = "mnt-edge-page-offset";
 
@@ -158,7 +197,7 @@
         box-sizing: border-box;
         pointer-events: auto;
         transform: translateY(0);
-        transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s ease, background-color 0.2s ease;
+        transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s ease;
       }
 
       .bar-wrapper.hidden {
@@ -247,7 +286,6 @@
         background-color: var(--hover-bg);
       }
 
-      /* Menus no estilo Fluent UI do Edge */
       .fluent-menu {
         position: fixed;
         min-width: 225px;
@@ -322,7 +360,6 @@
         margin: 4px 6px;
       }
 
-      /* Submenu lateral que abre ao passar o mouse ou clicar */
       .submenu {
         position: absolute;
         top: -4px;
@@ -384,7 +421,9 @@
       contextMenu,
       folderDropdown,
       isHoverRevealed: false,
-      isMenuOpen: false
+      isMenuOpen: false,
+      appliedTheme: memorized ? memorized.theme : null,
+      appliedBgBar: memorized ? memorized.bgBar : null
     };
 
     const appendTarget = document.documentElement || document.body;
@@ -399,7 +438,6 @@
     injectSpeculationRules();
   }
 
-  // Renderiza os favoritos e pastas na barra
   function renderBookmarksList() {
     if (!ui) return;
     ui.strip.innerHTML = "";
@@ -484,7 +522,6 @@
     ui.isMenuOpen = true;
   }
 
-  // Constrói o menu "..." com submenus no padrão do Edge
   function renderSettingsMenu() {
     if (!ui) return;
     ui.settingsMenu.innerHTML = "";
@@ -502,7 +539,6 @@
       { id: "never", label: "Nunca mostrar (apenas ao encostar no topo)" }
     ];
 
-    // 1. Submenu: Definir buscador padrão
     const engineRow = document.createElement("div");
     engineRow.className = "menu-row has-submenu";
     engineRow.innerHTML = `
@@ -539,7 +575,6 @@
     });
     engineRow.appendChild(engineSubmenu);
 
-    // 2. Submenu: Exibição da barra de favoritos
     const visRow = document.createElement("div");
     visRow.className = "menu-row has-submenu";
     visRow.innerHTML = `
@@ -576,11 +611,9 @@
     });
     visRow.appendChild(visSubmenu);
 
-    // Divisor
     const divider1 = document.createElement("div");
     divider1.className = "menu-divider";
 
-    // 3. Opção: Aceleração da Home
     const accelBtn = document.createElement("button");
     accelBtn.className = "menu-row";
     accelBtn.innerHTML = `
@@ -597,11 +630,9 @@
       });
     });
 
-    // Divisor
     const divider2 = document.createElement("div");
     divider2.className = "menu-divider";
 
-    // 4. Atalho para Editar Favoritos (edge://favorites/)
     const favManagerBtn = document.createElement("button");
     favManagerBtn.className = "menu-row";
     favManagerBtn.innerHTML = `
@@ -624,7 +655,6 @@
     ui.settingsMenu.appendChild(favManagerBtn);
   }
 
-  // Menu de Contexto ao clicar com o botão direito na barra
   function renderContextMenu() {
     if (!ui) return;
     ui.contextMenu.innerHTML = "";
@@ -696,12 +726,10 @@
     updateBarVisibilityState();
   }
 
-  // Decide se a barra deve ficar acoplada (empurrando a página) ou recolhida (revelando no hover)
   function shouldBarBeDocked() {
     if (!currentSettings) return false;
     if (currentSettings.barVisibility === "always") return true;
     if (currentSettings.barVisibility === "never") return false;
-    // Padrão "home_only": acoplada na Home, oculta após pesquisar
     return isSearchHomePage();
   }
 
@@ -711,13 +739,11 @@
 
     if (docked) {
       ui.wrapper.classList.remove("hidden", "floating-open");
-      // Empurra tanto a página normal quanto cabeçalhos fixos de resultados de pesquisa
       ui.pageStyle.textContent = `
         html {
           padding-top: 34px !important;
           box-sizing: border-box;
         }
-        /* Ajuste para cabeçalhos fixos em páginas de resultados de busca */
         #searchform, .sfbg, header[role="banner"], .header-wrap {
           margin-top: 0px;
         }
@@ -734,11 +760,9 @@
     }
   }
 
-  // Configura eventos de clique, botão direito e aproximação do mouse na borda superior
   function setupInteractions() {
     let hoverTimer = null;
 
-    // Botão "..." no canto direito da barra
     ui.moreBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       const wasOpen = ui.settingsMenu.classList.contains("open");
@@ -755,7 +779,6 @@
       }
     });
 
-    // Clique com o botão direito na barra abre o menu de contexto com "Editar favoritos"
     ui.wrapper.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -768,7 +791,6 @@
       updateBarVisibilityState();
     });
 
-    // Detecta quando o mouse encosta na borda superior da tela (<= 8px)
     window.addEventListener(
       "mousemove",
       (e) => {
@@ -791,7 +813,6 @@
       { passive: true }
     );
 
-    // Mantém a barra aberta enquanto o mouse estiver sobre ela
     ui.wrapper.addEventListener("mouseenter", () => {
       clearTimeout(hoverTimer);
       ui.isHoverRevealed = true;
@@ -809,7 +830,6 @@
       if (ui && ui.isMenuOpen) closeAllMenus();
     });
 
-    // Monitora mudanças dinâmicas de URL (quando o usuário pesquisa sem recarregar tudo)
     let lastHref = window.location.href;
     const checkUrlChange = () => {
       if (window.location.href !== lastHref) {
@@ -823,67 +843,116 @@
     setInterval(checkUrlChange, 250);
   }
 
-  // Sincroniza a cor da barra com o fundo real da página e o modo Claro/Escuro do Edge
-  function setupThemeAndColorSync() {
-    function applyAdaptiveColor() {
-      if (!ui) return;
-      const bodyOrHtml = document.body || document.documentElement;
-      const computedBg = window.getComputedStyle(bodyOrHtml).backgroundColor;
-      const match = computedBg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-
-      let isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-
+  // Extrai a cor de fundo real da página (verificando body e html) após o carregamento
+  function extractPageColor() {
+    const candidates = [document.body, document.documentElement].filter(Boolean);
+    for (const el of candidates) {
+      const bg = window.getComputedStyle(el).backgroundColor;
+      if (!bg || bg === "transparent" || bg === "rgba(0, 0, 0, 0)") continue;
+      const match = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
       if (match) {
-        const r = parseInt(match[1], 10);
-        const g = parseInt(match[2], 10);
-        const b = parseInt(match[3], 10);
-        // Só considera se não for totalmente transparente
-        if (!(r === 0 && g === 0 && b === 0 && computedBg.includes("0)"))) {
-          const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-          isDark = luminance < 0.5;
-          // Ajusta sutilmente a cor da página para criar o efeito integrado do Edge
-          const shift = isDark ? 8 : -6;
-          const nr = Math.min(255, Math.max(0, r + shift));
-          const ng = Math.min(255, Math.max(0, g + shift));
-          const nb = Math.min(255, Math.max(0, b + shift));
-          ui.host.style.setProperty("--bg-bar", `rgba(${nr}, ${ng}, ${nb}, 0.90)`);
-        }
+        return {
+          r: parseInt(match[1], 10),
+          g: parseInt(match[2], 10),
+          b: parseInt(match[3], 10)
+        };
       }
-
-      ui.host.setAttribute("data-theme", isDark ? "dark" : "light");
     }
-
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", applyAdaptiveColor);
-    } else {
-      applyAdaptiveColor();
-    }
-
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyAdaptiveColor);
-
-    const observer = new MutationObserver(applyAdaptiveColor);
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class", "style", "dark", "data-theme"]
-    });
+    return null;
   }
 
-  // CAMADA 3 DE ACELERAÇÃO: Speculation Rules API para pré-carregar a Home na memória do Chromium
-  function injectSpeculationRules() {
-    if (!currentSettings?.acceleration || !document.head) return;
-    if (document.getElementById("mnt-speculation-rules")) return;
+  // Valida a cor real da página depois que ela carrega; só altera se divergir do memorizado
+  function setupThemeAndColorSync() {
+    function validateAndApplyTheme() {
+      if (!ui) return;
 
-    const specScript = document.createElement("script");
-    specScript.id = "mnt-speculation-rules";
-    specScript.type = "speculationrules";
-    specScript.textContent = JSON.stringify({
-      prerender: [
-        {
-          source: "list",
-          urls: [window.location.origin + "/"]
-        }
-      ]
-    });
-    document.head.appendChild(specScript);
+      const rgb = extractPageColor();
+      let detectedTheme;
+      let detectedBgBar;
+
+      if (rgb) {
+        const luminance = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
+        detectedTheme = luminance < 0.5 ? "dark" : "light";
+        const shift = detectedTheme === "dark" ? 8 : -6;
+        const nr = Math.min(255, Math.max(0, rgb.r + shift));
+        const ng = Math.min(255, Math.max(0, rgb.g + shift));
+        const nb = Math.min(255, Math.max(0, rgb.b + shift));
+        detectedBgBar = `rgba(${nr}, ${ng}, ${nb}, 0.90)`;
+      } else {
+        // Se a página ainda não pintou o fundo, não sobrescreve o tema que já está memorizado
+        if (ui.appliedTheme) return;
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        detectedTheme = prefersDark ? "dark" : "light";
+        detectedBgBar = prefersDark
+          ? "rgba(32, 33, 36, 0.90)"
+          : "rgba(247, 247, 247, 0.88)";
+      }
+
+      // Se for idêntico ao que já foi carregado da memória, mantém intacto sem repintar
+      if (ui.appliedTheme === detectedTheme && ui.appliedBgBar === detectedBgBar) {
+        return;
+      }
+
+      ui.appliedTheme = detectedTheme;
+      ui.appliedBgBar = detectedBgBar;
+      ui.host.setAttribute("data-theme", detectedTheme);
+      ui.host.style.setProperty("--bg-bar", detectedBgBar);
+
+      memorizeTheme({ theme: detectedTheme, bgBar: detectedBgBar });
+    }
+
+    const startWatching = () => {
+      validateAndApplyTheme();
+
+      const observer = new MutationObserver(validateAndApplyTheme);
+      observer.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["class", "style", "dark", "data-theme"]
+      });
+      if (document.body) {
+        observer.observe(document.body, {
+          attributes: true,
+          attributeFilter: ["class", "style", "dark", "data-theme"]
+        });
+      }
+    };
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", startWatching, { once: true });
+      window.addEventListener("load", validateAndApplyTheme, { once: true });
+    } else {
+      startWatching();
+    }
+
+    window
+      .matchMedia("(prefers-color-scheme: dark)")
+      .addEventListener("change", validateAndApplyTheme);
+  }
+
+  // CAMADA 3 DE ACELERAÇÃO: Speculation Rules API (aguarda o <head> existir caso rode em document_start)
+  function injectSpeculationRules() {
+    if (!currentSettings?.acceleration) return;
+
+    const appendRules = () => {
+      if (!document.head || document.getElementById("mnt-speculation-rules")) return;
+      const specScript = document.createElement("script");
+      specScript.id = "mnt-speculation-rules";
+      specScript.type = "speculationrules";
+      specScript.textContent = JSON.stringify({
+        prerender: [
+          {
+            source: "list",
+            urls: [window.location.origin + "/"]
+          }
+        ]
+      });
+      document.head.appendChild(specScript);
+    };
+
+    if (document.head) {
+      appendRules();
+    } else {
+      document.addEventListener("DOMContentLoaded", appendRules, { once: true });
+    }
   }
 })();
