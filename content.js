@@ -669,7 +669,7 @@
     const aiEngineOptions = [
       { id: "gemini", label: "Gemini" },
       { id: "claude", label: "Claude" },
-      { id: "chatgpt", label: "Chat GPT" },
+      { id: "chatgpt", label: "ChatGPT" },
       { id: "perplexity", label: "Perplexity" }
     ];
 
