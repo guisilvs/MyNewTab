@@ -2,7 +2,19 @@
   if (window.top !== window.self) return;
 
   const LOCAL_THEME_KEY = "mnt_cached_theme_v1";
-  const RGBA_COLOR_REGEX = /^rgba\(\d{1,3},\s*\d{1,3},\s*\d{1,3},\s*(0(\.\d+)?\vert{}1(\.0+)?)\)$/;
+  const RGBA_COLOR_REGEX = /^rgba\((\d{1,3}),\s*(\d{1,3}),\s*(\d{1,3}),\s*([01](?:\.\d+)?)\)$/;
+
+  function isValidRgbaColor(value) {
+    if (typeof value !== "string") return false;
+    const match = value.match(RGBA_COLOR_REGEX);
+    if (!match) return false;
+    const r = Number(match[1]);
+    const g = Number(match[2]);
+    const b = Number(match[3]);
+    const a = Number(match[4]);
+    return r <= 255 && g <= 255 && b <= 255 && a >= 0 && a <= 1;
+  }
+
 
   let currentSettings = null;
   let currentBookmarks = [];
@@ -60,7 +72,7 @@
   function isValidThemeData(data) {
     if (!data || typeof data !== "object") return false;
     if (data.theme !== "dark" && data.theme !== "light") return false;
-    if (data.bgBar && (typeof data.bgBar !== "string" || !RGBA_COLOR_REGEX.test(data.bgBar))) {
+    if (!data.bgBar || !isValidRgbaColor(data.bgBar)) {
       return false;
     }
     return true;
@@ -77,8 +89,11 @@
       }
     } catch (e) {}
 
-    const cached = currentSettings?.themeCache?.[engine];
+    const cached = engine ? currentSettings?.themeCache?.[engine] : null;
     if (isValidThemeData(cached)) {
+      try {
+        localStorage.setItem(LOCAL_THEME_KEY, JSON.stringify(cached));
+      } catch (e) {}
       return cached;
     }
     return null;
@@ -135,8 +150,9 @@
 
     if (!ui) {
       mountBar();
+    } else {
+      updateBarVisibilityState();
     }
-    updateBarVisibilityState();
   }
 
   function destroyBar() {
@@ -159,15 +175,6 @@
     // Modo "closed" impede que scripts externos da página leiam os favoritos do usuário
     const shadow = host.attachShadow({ mode: "closed" });
 
-    // APLICAÇÃO IMEDIATA DO TEMA MEMORIZADO (Antes de inserir no DOM para evitar qualquer piscada)
-    const memorized = getMemorizedTheme();
-    if (memorized) {
-      host.setAttribute("data-theme", memorized.theme);
-      if (memorized.bgBar) {
-        host.style.setProperty("--bg-bar", memorized.bgBar);
-      }
-    }
-
     const pageStyle = document.createElement("style");
     pageStyle.id = "mnt-edge-page-offset";
 
@@ -175,14 +182,18 @@
     style.textContent = `
       :host {
         all: initial;
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 34px;
-        z-index: 2147483647;
-        font-family: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
-        font-size: 12px;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        height: 34px !important;
+        z-index: 2147483647 !important;
+        --mnt-font: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
+        font-family: var(--mnt-font) !important;
+        font-size: 12px !important;
+        font-weight: 400 !important;
+        font-style: normal !important;
+        letter-spacing: normal !important;
         user-select: none;
         pointer-events: none;
 
@@ -227,6 +238,11 @@
         border-bottom: 1px solid var(--border-bar);
         box-sizing: border-box;
         pointer-events: auto;
+        font-family: var(--mnt-font);
+        font-size: 12px;
+        font-weight: 400;
+        font-style: normal;
+        letter-spacing: normal;
         transform: translateY(0);
         transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s ease;
       }
@@ -273,8 +289,11 @@
         flex-shrink: 0;
         border: none;
         background: transparent;
-        font-family: inherit;
+        font-family: var(--mnt-font);
         font-size: 12px;
+        font-weight: 400;
+        font-style: normal;
+        letter-spacing: normal;
         line-height: 1;
       }
 
@@ -296,6 +315,7 @@
       .title {
         overflow: hidden;
         text-overflow: ellipsis;
+        font-family: var(--mnt-font);
       }
 
       .more-btn {
@@ -343,6 +363,10 @@
         flex-direction: column;
         z-index: 2147483647;
         pointer-events: auto;
+        font-family: var(--mnt-font);
+        font-weight: 400;
+        font-style: normal;
+        letter-spacing: normal;
         animation: menuFadeIn 0.12s cubic-bezier(0.16, 1, 0.3, 1);
       }
 
@@ -366,11 +390,14 @@
         border-radius: 5px;
         color: var(--text-color);
         font-size: 12.5px;
+        font-family: var(--mnt-font);
+        font-weight: 400;
+        font-style: normal;
+        letter-spacing: normal;
         cursor: pointer;
         text-decoration: none;
         background: transparent;
         border: none;
-        font-family: inherit;
         text-align: left;
         box-sizing: border-box;
         width: 100%;
@@ -387,6 +414,7 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        font-family: var(--mnt-font);
       }
 
       .check-slot {
@@ -417,6 +445,7 @@
         padding: 4px;
         display: none;
         flex-direction: column;
+        font-family: var(--mnt-font);
       }
 
       .menu-row.has-submenu:hover > .submenu,
@@ -427,6 +456,22 @@
 
     const wrapper = document.createElement("div");
     wrapper.className = "bar-wrapper";
+    // Desativa transição no frame 0 para que a barra não anime se já nascer recolhida
+    wrapper.style.transition = "none";
+
+    // APLICAÇÃO IMEDIATA DO TEMA MEMORIZADO (Antes de inserir no DOM para evitar qualquer piscada)
+    const memorized = getMemorizedTheme();
+    if (memorized) {
+      host.setAttribute("data-theme", memorized.theme);
+      if (memorized.bgBar) {
+        host.style.setProperty("--bg-bar", memorized.bgBar);
+        wrapper.style.setProperty("--bg-bar", memorized.bgBar);
+      }
+    } else {
+      // Na 1ª abertura sem cache, inicia seguindo a preferência do navegador até validar a página
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      host.setAttribute("data-theme", prefersDark ? "dark" : "light");
+    }
 
     const strip = document.createElement("div");
     strip.className = "bookmarks-strip";
@@ -471,9 +516,21 @@
       cleanupFns: []
     };
 
+    // Define estado visível/oculto antes de anexar ao DOM
+    updateBarVisibilityState();
+
     const appendTarget = document.documentElement || document.body;
     appendTarget.appendChild(pageStyle);
     appendTarget.appendChild(host);
+
+    // Restaura a transição suave após a montagem inicial
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (ui && ui.wrapper) {
+          ui.wrapper.style.transition = "";
+        }
+      });
+    });
 
     renderBookmarksList();
     renderSettingsMenu();
@@ -910,27 +967,46 @@
     });
   }
 
-  // Extrai a cor de fundo real da página (verificando body e html) após o carregamento
+  // Extrai a cor de fundo real da página (verificando body e html) após o carregamento completo
   function extractPageColor() {
+    const engine = detectCurrentEngine();
     const candidates = [document.body, document.documentElement].filter(Boolean);
     for (const el of candidates) {
-      const bg = window.getComputedStyle(el).backgroundColor;
+      const style = window.getComputedStyle(el);
+      const bg = style.backgroundColor;
       if (!bg || bg === "transparent" || bg === "rgba(0, 0, 0, 0)") continue;
       const match = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
       if (match) {
-        return {
-          r: parseInt(match[1], 10),
-          g: parseInt(match[2], 10),
-          b: parseInt(match[3], 10)
-        };
+        const r = parseInt(match[1], 10);
+        const g = parseInt(match[2], 10);
+        const b = parseInt(match[3], 10);
+
+        // Evita falso positivo caso o <html> tenha fundo branco padrão enquanto a página usa color-scheme dark
+        if (el === document.documentElement && r === 255 && g === 255 && b === 255) {
+          const bodyStyle = document.body ? window.getComputedStyle(document.body) : null;
+          if (
+            String(style.colorScheme).includes("dark") ||
+            (bodyStyle && String(bodyStyle.colorScheme).includes("dark"))
+          ) {
+            continue;
+          }
+        }
+
+        // No Google, o canvas nativo escuro pode reportar preto puro (#000000) antes do estilo aplicar
+        if (engine === "google" && r === 0 && g === 0 && b === 0) {
+          continue;
+        }
+
+        return { r, g, b };
       }
     }
     return null;
   }
 
-  // Valida a cor real da página depois que ela carrega; só altera se divergir do memorizado
+  // Valida a cor real somente DEPOIS que a página termina de carregar por completo
   function setupThemeAndColorSync() {
     let debounceTimer = null;
+    let postLoadTimer = null;
     let observer = null;
 
     function validateAndApplyTheme() {
@@ -960,6 +1036,11 @@
 
       // Se for idêntico ao que já foi carregado da memória, mantém intacto sem repintar
       if (ui.appliedTheme === detectedTheme && ui.appliedBgBar === detectedBgBar) {
+        const engine = detectCurrentEngine();
+        const cached = engine ? currentSettings?.themeCache?.[engine] : null;
+        if (!cached || cached.theme !== detectedTheme || cached.bgBar !== detectedBgBar) {
+          memorizeTheme({ theme: detectedTheme, bgBar: detectedBgBar });
+        }
         return;
       }
 
@@ -967,6 +1048,7 @@
       ui.appliedBgBar = detectedBgBar;
       ui.host.setAttribute("data-theme", detectedTheme);
       ui.host.style.setProperty("--bg-bar", detectedBgBar);
+      ui.wrapper.style.setProperty("--bg-bar", detectedBgBar);
 
       memorizeTheme({ theme: detectedTheme, bgBar: detectedBgBar });
     }
@@ -976,10 +1058,11 @@
       debounceTimer = setTimeout(validateAndApplyTheme, 100);
     }
 
-    const startWatching = () => {
+    const startWatchingAfterLoad = () => {
       if (!ui) return;
       validateAndApplyTheme();
 
+      if (observer) observer.disconnect();
       observer = new MutationObserver(debouncedValidateTheme);
       observer.observe(document.documentElement, {
         attributes: true,
@@ -993,22 +1076,27 @@
       }
     };
 
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", startWatching, { once: true });
-      window.addEventListener("load", validateAndApplyTheme, { once: true });
+    const onWindowLoaded = () => {
+      clearTimeout(postLoadTimer);
+      // Aguarda 150ms após o load completo para garantir que o CSS noturno do buscador já estabilizou
+      postLoadTimer = setTimeout(startWatchingAfterLoad, 150);
+    };
+
+    if (document.readyState === "complete") {
+      onWindowLoaded();
     } else {
-      startWatching();
+      window.addEventListener("load", onWindowLoaded, { once: true });
     }
 
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    mediaQuery.addEventListener("change", validateAndApplyTheme);
+    mediaQuery.addEventListener("change", debouncedValidateTheme);
 
     ui.cleanupFns.push(() => {
       clearTimeout(debounceTimer);
+      clearTimeout(postLoadTimer);
       if (observer) observer.disconnect();
-      document.removeEventListener("DOMContentLoaded", startWatching);
-      window.removeEventListener("load", validateAndApplyTheme);
-      mediaQuery.removeEventListener("change", validateAndApplyTheme);
+      window.removeEventListener("load", onWindowLoaded);
+      mediaQuery.removeEventListener("change", debouncedValidateTheme);
     });
   }
 

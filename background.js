@@ -6,6 +6,18 @@ const ENGINES = {
 };
 
 const VALID_VISIBILITY = new Set(["home_only", "always", "never"]);
+const RGBA_COLOR_REGEX = /^rgba\((\d{1,3}),\s*(\d{1,3}),\s*(\d{1,3}),\s*([01](?:\.\d+)?)\)$/;
+
+function isValidRgbaColor(value) {
+  if (typeof value !== "string") return false;
+  const match = value.match(RGBA_COLOR_REGEX);
+  if (!match) return false;
+  const r = Number(match[1]);
+  const g = Number(match[2]);
+  const b = Number(match[3]);
+  const a = Number(match[4]);
+  return r <= 255 && g <= 255 && b <= 255 && a >= 0 && a <= 1;
+}
 
 const DEFAULT_SETTINGS = {
   engine: "google",
@@ -39,7 +51,7 @@ function sanitizeSettingsPartial(raw) {
         entry &&
         typeof entry === "object" &&
         (entry.theme === "dark" || entry.theme === "light") &&
-        typeof entry.bgBar === "string"
+        isValidRgbaColor(entry.bgBar)
       ) {
         safeCache[key] = { theme: entry.theme, bgBar: entry.bgBar };
       }
@@ -81,14 +93,15 @@ chrome.storage.onChanged.addListener((changes) => {
   }
 });
 
-// CAMADA 1 DE ACELERAÇÃO: Intercepta a Nova Guia instantaneamente (mesmo se o Service Worker acordar agora)
+// CAMADA 1 DE ACELERAÇÃO: Intercepta a Nova Guia instantaneamente (suporta protocolos do Edge e Chrome)
 chrome.tabs.onCreated.addListener((tab) => {
   const pending = tab.pendingUrl || tab.url || "";
-  const extNewTabUrl = chrome.runtime.getURL("newtab.html");
+  const extId = chrome.runtime.id;
   const isNewTab =
     pending.startsWith("edge://newtab") ||
     pending.startsWith("chrome://newtab") ||
-    pending.startsWith(extNewTabUrl);
+    pending.startsWith(`chrome-extension://${extId}/newtab.html`) ||
+    pending.startsWith(`extension://${extId}/newtab.html`);
 
   if (!isNewTab) return;
 
