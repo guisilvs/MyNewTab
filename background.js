@@ -10,7 +10,22 @@ const ENGINES = {
 };
 
 const VALID_VISIBILITY = new Set(["home_only", "always", "never"]);
+const VALID_FAVORITES_URLS = new Set(["edge://favorites/", "chrome://bookmarks/"]);
 const RGBA_COLOR_REGEX = /^rgba\((\d{1,3}),\s*(\d{1,3}),\s*(\d{1,3}),\s*([01](?:\.\d+)?)\)$/;
+
+function detectFavoritesUrl() {
+  const brands = navigator.userAgentData?.brands;
+  if (
+    Array.isArray(brands) &&
+    brands.some((b) => typeof b.brand === "string" && (b.brand.includes("Edge") || b.brand.includes("Edg")))
+  ) {
+    return "edge://favorites/";
+  }
+  if (typeof navigator !== "undefined" && typeof navigator.userAgent === "string" && navigator.userAgent.includes("Edg/")) {
+    return "edge://favorites/";
+  }
+  return "chrome://bookmarks/";
+}
 
 function isValidRgbaColor(value) {
   if (typeof value !== "string") return false;
@@ -27,6 +42,7 @@ const DEFAULT_SETTINGS = {
   engine: "google",
   barVisibility: "home_only", // "home_only" | "always" | "never"
   acceleration: true,
+  favoritesUrl: detectFavoritesUrl(),
   themeCache: {} // Memoriza { theme, bgBar } por buscador
 };
 
@@ -76,7 +92,10 @@ function syncSettingsCache(callback) {
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get(DEFAULT_SETTINGS, (res) => {
-    const merged = { ...DEFAULT_SETTINGS, ...res };
+    const favoritesUrl = VALID_FAVORITES_URLS.has(res.favoritesUrl)
+      ? res.favoritesUrl
+      : detectFavoritesUrl();
+    const merged = { ...DEFAULT_SETTINGS, ...res, favoritesUrl };
     chrome.storage.local.set(merged);
     cachedSettings = merged;
     isCacheReady = true;
@@ -206,7 +225,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === "openFavoritesManager") {
-    chrome.tabs.create({ url: "edge://favorites/" });
+    const url = VALID_FAVORITES_URLS.has(cachedSettings.favoritesUrl)
+      ? cachedSettings.favoritesUrl
+      : DEFAULT_SETTINGS.favoritesUrl;
+    chrome.tabs.create({ url });
     sendResponse({ ok: true });
     return false;
   }
