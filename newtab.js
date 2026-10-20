@@ -48,14 +48,9 @@ chrome.storage.local.get({ engine: "google", acceleration: true, themeCache: {} 
     document.head.appendChild(link);
   }
 
-  if (chrome.tabs && chrome.tabs.getCurrent) {
-    chrome.tabs.getCurrent((tab) => {
-      if (tab && (tab.pendingUrl === target || tab.url === target)) {
-        return;
-      }
+  chrome.runtime.sendMessage({ action: "redirectNewTab" }, (res) => {
+    if (chrome.runtime.lastError || !res || !res.ok) {
       window.location.replace(target);
-    });
-  } else {
-    window.location.replace(target);
-  }
+    }
+  });
 });

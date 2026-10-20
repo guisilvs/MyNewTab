@@ -895,16 +895,43 @@
     });
   }
 
+  function isConventionalSearchEngine(engine) {
+    return engine === "google" || engine === "duckduckgo" || engine === "yahoo" || engine === "brave";
+  }
+
   function adjustFixedTopElements() {
-    if (!ui || !shouldBarBeDocked() || !document.body) return;
+    if (!ui || !shouldBarBeDocked() || !document.body) {
+      clearFixedTopAttributes();
+      return;
+    }
+
+    // Limpa os atributos anteriores antes de medir para obter o estado nativo real da página
+    // e restaurar imediatamente elementos que deixaram de ser fixed/sticky ao voltar ao topo
+    clearFixedTopAttributes();
+
+    const engine = detectCurrentEngine();
+    if (isConventionalSearchEngine(engine) && window.scrollY <= 10) {
+      return;
+    }
 
     const candidates = new Set();
+    const addWithAncestors = (target) => {
+      const chain = [];
+      let curr = target;
+      while (curr && curr !== document.body && curr !== document.documentElement) {
+        if (curr !== ui.host) chain.push(curr);
+        curr = curr.parentElement;
+      }
+      for (let i = chain.length - 1; i >= 0; i--) {
+        candidates.add(chain[i]);
+      }
+    };
 
     document.body
       .querySelectorAll(
         'header, nav, aside, [role="banner"], [role="navigation"], #gb, #searchform, .sfbg, #hd, #ybar, .header-wrap'
       )
-      .forEach((el) => candidates.add(el));
+      .forEach(addWithAncestors);
 
     const sampleYs = [6, 18, 30];
     const w = window.innerWidth || 1024;
@@ -925,15 +952,7 @@
         if (x <= 0) continue;
         const hits = document.elementsFromPoint(x, y);
         for (const hit of hits) {
-          const chain = [];
-          let curr = hit;
-          while (curr && curr !== document.body && curr !== document.documentElement) {
-            if (curr !== ui.host) chain.push(curr);
-            curr = curr.parentElement;
-          }
-          for (let i = chain.length - 1; i >= 0; i--) {
-            candidates.add(chain[i]);
-          }
+          addWithAncestors(hit);
         }
       }
     }
@@ -946,13 +965,12 @@
       if (cs.position !== "fixed" && cs.position !== "sticky") return;
 
       const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+
       const parsedTop = parseFloat(cs.top);
       const origTop = Number.isFinite(parsedTop) ? parsedTop : 0;
 
-      const isFixedInBarZone = cs.position === "fixed" && rect.top >= -2 && rect.top < 34;
-      const isStickyTopHeader = cs.position === "sticky" && origTop >= 0 && origTop < 34 && rect.top <= 48;
-
-      if ((isFixedInBarZone || isStickyTopHeader) && origTop >= -2 && origTop < 34) {
+      if (rect.top >= -2 && rect.top < 34 && origTop >= -2 && origTop < 34) {
         el.style.setProperty("--mnt-orig-top", `${Math.max(0, origTop)}px`);
         el.setAttribute("data-mnt-fixed-top", "true");
 
@@ -989,9 +1007,6 @@
         #searchform, .sfbg, header[role="banner"], .header-wrap {
           margin-top: 0px;
         }
-        #searchform.minidiv {
-          top: 34px !important;
-        }
         [data-mnt-fixed-top="true"] {
           top: calc(var(--mnt-orig-top, 0px) + 34px) !important;
         }
@@ -1017,6 +1032,8 @@
 
   function setupInteractions() {
     let hoverTimer = null;
+    let clickAdjustTimer = null;
+    let scrollSettleTimer = null;
 
     ui.moreBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1083,18 +1100,23 @@
     const onDocumentClick = () => {
       if (ui && ui.isMenuOpen) closeAllMenus();
       if (ui && shouldBarBeDocked()) {
-        setTimeout(adjustFixedTopElements, 60);
+        clearTimeout(clickAdjustTimer);
+        clickAdjustTimer = setTimeout(adjustFixedTopElements, 60);
       }
     };
     document.addEventListener("click", onDocumentClick);
 
     let scrollRafId = null;
     const onLayoutShiftOrScroll = () => {
-      if (!ui || !shouldBarBeDocked() || scrollRafId) return;
-      scrollRafId = requestAnimationFrame(() => {
-        scrollRafId = null;
-        adjustFixedTopElements();
-      });
+      if (!ui || !shouldBarBeDocked()) return;
+      if (!scrollRafId) {
+        scrollRafId = requestAnimationFrame(() => {
+          scrollRafId = null;
+          adjustFixedTopElements();
+        });
+      }
+      clearTimeout(scrollSettleTimer);
+      scrollSettleTimer = setTimeout(adjustFixedTopElements, 120);
     };
     window.addEventListener("scroll", onLayoutShiftOrScroll, { passive: true });
     window.addEventListener("resize", onLayoutShiftOrScroll, { passive: true });
@@ -1119,6 +1141,8 @@
     // Registra limpeza para evitar Memory Leaks caso a barra seja desmontada
     ui.cleanupFns.push(() => {
       clearTimeout(hoverTimer);
+      clearTimeout(clickAdjustTimer);
+      clearTimeout(scrollSettleTimer);
       clearInterval(urlIntervalId);
       if (scrollRafId) cancelAnimationFrame(scrollRafId);
       window.removeEventListener("mousemove", onWindowMouseMove);

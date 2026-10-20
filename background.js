@@ -116,6 +116,45 @@ chrome.storage.onChanged.addListener((changes) => {
   }
 });
 
+const redirectingTabIds = new Set();
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  redirectingTabIds.delete(tabId);
+});
+
+// Cria uma aba limpa com a URL de destino e fecha a aba New Tab original
+// para evitar que o Chromium force o foco e selecione a URL na barra de endereços (omnibox)
+function openCleanNewTab(tab, targetUrl) {
+  if (!tab || typeof tab.id !== "number") return;
+  if (redirectingTabIds.has(tab.id)) return;
+  redirectingTabIds.add(tab.id);
+
+  const createProps = {
+    url: targetUrl,
+    active: tab.active !== false
+  };
+  if (typeof tab.windowId === "number") {
+    createProps.windowId = tab.windowId;
+  }
+  if (typeof tab.index === "number") {
+    createProps.index = tab.index;
+  }
+
+  chrome.tabs.create(createProps, (createdTab) => {
+    if (chrome.runtime.lastError || !createdTab) {
+      chrome.tabs.update(tab.id, { url: targetUrl }, () => {
+        void chrome.runtime.lastError;
+        redirectingTabIds.delete(tab.id);
+      });
+      return;
+    }
+    chrome.tabs.remove(tab.id, () => {
+      void chrome.runtime.lastError;
+      redirectingTabIds.delete(tab.id);
+    });
+  });
+}
+
 // CAMADA 1 DE ACELERAÇÃO: Intercepta a Nova Guia instantaneamente (suporta protocolos do Edge e Chrome)
 chrome.tabs.onCreated.addListener((tab) => {
   if (!tab || typeof tab.id !== "number") return;
@@ -132,19 +171,15 @@ chrome.tabs.onCreated.addListener((tab) => {
   if (isCacheReady) {
     if (!cachedSettings.acceleration) return;
     const targetUrl = ENGINES[cachedSettings.engine] || ENGINES.google;
-    chrome.tabs.update(tab.id, { url: targetUrl }, () => {
-      void chrome.runtime.lastError;
-    });
+    openCleanNewTab(tab, targetUrl);
   } else {
     syncSettingsCache((settings) => {
-      if (!settings.acceleration) return;
+      if (!settings.acceleration || redirectingTabIds.has(tab.id)) return;
       const targetUrl = ENGINES[settings.engine] || ENGINES.google;
       chrome.tabs.get(tab.id, (currentTab) => {
         if (chrome.runtime.lastError || !currentTab) return;
         if (currentTab.pendingUrl === targetUrl || currentTab.url === targetUrl) return;
-        chrome.tabs.update(tab.id, { url: targetUrl }, () => {
-          void chrome.runtime.lastError;
-        });
+        openCleanNewTab(currentTab, targetUrl);
       });
     });
   }
@@ -221,6 +256,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     };
     if (isCacheReady) respond();
     else syncSettingsCache(respond);
+    return true;
+  }
+
+  if (request.action === "redirectNewTab") {
+    const tab = sender.tab;
+    if (!tab || typeof tab.id !== "number") {
+      sendResponse({ ok: false });
+      return false;
+    }
+    const doRedirect = () => {
+      const targetUrl = ENGINES[cachedSettings.engine] || ENGINES.google;
+      openCleanNewTab(tab, targetUrl);
+      sendResponse({ ok: true });
+    };
+    if (isCacheReady) doRedirect();
+    else syncSettingsCache(doRedirect);
     return true;
   }
 
