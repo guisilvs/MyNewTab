@@ -5,6 +5,8 @@ const ENGINES = {
   brave: "https://search.brave.com/"
 };
 
+const VALID_VISIBILITY = new Set(["home_only", "always", "never"]);
+
 const DEFAULT_SETTINGS = {
   engine: "google",
   barVisibility: "home_only", // "home_only" | "always" | "never"
@@ -15,19 +17,52 @@ const DEFAULT_SETTINGS = {
 let cachedSettings = { ...DEFAULT_SETTINGS };
 let isCacheReady = false;
 
+// Valida e filtra apenas configurações permitidas antes de salvar no storage
+function sanitizeSettingsPartial(raw) {
+  const clean = {};
+  if (!raw || typeof raw !== "object") return clean;
+
+  if (typeof raw.engine === "string" && Object.prototype.hasOwnProperty.call(ENGINES, raw.engine)) {
+    clean.engine = raw.engine;
+  }
+  if (typeof raw.barVisibility === "string" && VALID_VISIBILITY.has(raw.barVisibility)) {
+    clean.barVisibility = raw.barVisibility;
+  }
+  if (typeof raw.acceleration === "boolean") {
+    clean.acceleration = raw.acceleration;
+  }
+  if (raw.themeCache && typeof raw.themeCache === "object" && !Array.isArray(raw.themeCache)) {
+    const safeCache = {};
+    for (const key of Object.keys(ENGINES)) {
+      const entry = raw.themeCache[key];
+      if (
+        entry &&
+        typeof entry === "object" &&
+        (entry.theme === "dark" || entry.theme === "light") &&
+        typeof entry.bgBar === "string"
+      ) {
+        safeCache[key] = { theme: entry.theme, bgBar: entry.bgBar };
+      }
+    }
+    clean.themeCache = safeCache;
+  }
+  return clean;
+}
+
 function syncSettingsCache(callback) {
   chrome.storage.local.get(DEFAULT_SETTINGS, (res) => {
-    cachedSettings = res;
+    cachedSettings = { ...DEFAULT_SETTINGS, ...res };
     isCacheReady = true;
     setupPreWarmer();
-    if (callback) callback(res);
+    if (callback) callback(cachedSettings);
   });
 }
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get(DEFAULT_SETTINGS, (res) => {
-    chrome.storage.local.set(res);
-    cachedSettings = res;
+    const merged = { ...DEFAULT_SETTINGS, ...res };
+    chrome.storage.local.set(merged);
+    cachedSettings = merged;
     isCacheReady = true;
     setupPreWarmer();
   });
@@ -37,7 +72,9 @@ syncSettingsCache();
 
 chrome.storage.onChanged.addListener((changes) => {
   for (let key in changes) {
-    cachedSettings[key] = changes[key].newValue;
+    if (Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, key)) {
+      cachedSettings[key] = changes[key].newValue;
+    }
   }
   if (changes.acceleration || changes.engine) {
     setupPreWarmer();
@@ -47,10 +84,11 @@ chrome.storage.onChanged.addListener((changes) => {
 // CAMADA 1 DE ACELERAÇÃO: Intercepta a Nova Guia instantaneamente (mesmo se o Service Worker acordar agora)
 chrome.tabs.onCreated.addListener((tab) => {
   const pending = tab.pendingUrl || tab.url || "";
+  const extNewTabUrl = chrome.runtime.getURL("newtab.html");
   const isNewTab =
     pending.startsWith("edge://newtab") ||
     pending.startsWith("chrome://newtab") ||
-    pending.includes("newtab.html");
+    pending.startsWith(extNewTabUrl);
 
   if (!isNewTab) return;
 
@@ -117,6 +155,11 @@ chrome.bookmarks.onChanged.addListener(notifyBookmarksChanged);
 chrome.bookmarks.onMoved.addListener(notifyBookmarksChanged);
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  // Garante que apenas scripts da própria extensão possam se comunicar com o Service Worker
+  if (sender.id !== chrome.runtime.id || !request || typeof request.action !== "string") {
+    return false;
+  }
+
   if (request.action === "initData") {
     const respond = () => {
       fetchBookmarksBar((items) => {
@@ -139,9 +182,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === "updateSettings") {
-    chrome.storage.local.set(request.newSettings, () => {
+    const sanitized = sanitizeSettingsPartial(request.newSettings);
+    cachedSettings = { ...cachedSettings, ...sanitized };
+    chrome.storage.local.set(sanitized, () => {
       sendResponse({ ok: true, settings: cachedSettings });
     });
     return true;
   }
+
+  return false;
 });

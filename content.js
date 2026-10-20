@@ -2,6 +2,7 @@
   if (window.top !== window.self) return;
 
   const LOCAL_THEME_KEY = "mnt_cached_theme_v1";
+  const RGBA_COLOR_REGEX = /^rgba\(\d{1,3},\s*\d{1,3},\s*\d{1,3},\s*(0(\.\d+)?\vert{}1(\.0+)?)\)$/;
 
   let currentSettings = null;
   let currentBookmarks = [];
@@ -37,11 +38,32 @@
     return false;
   }
 
+  // Valida se a URL do favorito usa protocolo web seguro antes de renderizar ou buscar favicon
+  function isSafeUrl(rawUrl) {
+    if (typeof rawUrl !== "string") return false;
+    try {
+      const parsed = new URL(rawUrl);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch (e) {
+      return false;
+    }
+  }
+
   function getFaviconUrl(pageUrl) {
     const url = new URL(chrome.runtime.getURL("/_favicon/"));
     url.searchParams.set("pageUrl", pageUrl);
     url.searchParams.set("size", "16");
     return url.toString();
+  }
+
+  // Valida os dados de tema contra manipulação do localStorage pela página
+  function isValidThemeData(data) {
+    if (!data || typeof data !== "object") return false;
+    if (data.theme !== "dark" && data.theme !== "light") return false;
+    if (data.bgBar && (typeof data.bgBar !== "string" || !RGBA_COLOR_REGEX.test(data.bgBar))) {
+      return false;
+    }
+    return true;
   }
 
   // Lê o tema memorizado anteriormente (0ms via localStorage ou fallback do storage da extensão)
@@ -51,18 +73,20 @@
       const raw = localStorage.getItem(LOCAL_THEME_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed && parsed.theme) return parsed;
+        if (isValidThemeData(parsed)) return parsed;
       }
     } catch (e) {}
 
-    if (currentSettings?.themeCache?.[engine]) {
-      return currentSettings.themeCache[engine];
+    const cached = currentSettings?.themeCache?.[engine];
+    if (isValidThemeData(cached)) {
+      return cached;
     }
     return null;
   }
 
   // Memoriza o tema validado para que a próxima abertura já carregue na cor certa
   function memorizeTheme(themeData) {
+    if (!isValidThemeData(themeData)) return;
     const engine = detectCurrentEngine();
     try {
       localStorage.setItem(LOCAL_THEME_KEY, JSON.stringify(themeData));
@@ -96,7 +120,7 @@
   });
 
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.action === "bookmarksUpdated" && ui) {
+    if (msg && msg.action === "bookmarksUpdated" && ui) {
       currentBookmarks = msg.items || [];
       renderBookmarksList();
     }
@@ -116,17 +140,24 @@
   }
 
   function destroyBar() {
-    if (ui) {
-      ui.host.remove();
-      ui.pageStyle.remove();
-      ui = null;
+    if (!ui) return;
+    if (Array.isArray(ui.cleanupFns)) {
+      ui.cleanupFns.forEach((fn) => {
+        try {
+          fn();
+        } catch (e) {}
+      });
     }
+    ui.host.remove();
+    ui.pageStyle.remove();
+    ui = null;
   }
 
   function mountBar() {
     const host = document.createElement("div");
     host.id = "mnt-edge-bookmarks-host";
-    const shadow = host.attachShadow({ mode: "open" });
+    // Modo "closed" impede que scripts externos da página leiam os favoritos do usuário
+    const shadow = host.attachShadow({ mode: "closed" });
 
     // APLICAÇÃO IMEDIATA DO TEMA MEMORIZADO (Antes de inserir no DOM para evitar qualquer piscada)
     const memorized = getMemorizedTheme();
@@ -436,7 +467,8 @@
       isHoverRevealed: false,
       isMenuOpen: false,
       appliedTheme: memorized ? memorized.theme : null,
-      appliedBgBar: memorized ? memorized.bgBar : null
+      appliedBgBar: memorized ? memorized.bgBar : null,
+      cleanupFns: []
     };
 
     const appendTarget = document.documentElement || document.body;
@@ -457,10 +489,12 @@
 
     currentBookmarks.forEach((node) => {
       if (node.url) {
+        if (!isSafeUrl(node.url)) return;
+
         const link = document.createElement("a");
         link.className = "item";
         link.href = node.url;
-        link.title = `${node.title}\n${node.url}`;
+        link.title = `${node.title || ""}\n${node.url}`;
 
         const icon = document.createElement("img");
         icon.src = getFaviconUrl(node.url);
@@ -476,8 +510,13 @@
       } else if (node.children) {
         const folderBtn = document.createElement("button");
         folderBtn.className = "item";
-        folderBtn.title = node.title;
-        folderBtn.innerHTML = `${ICONS.folder}<span class="title">${node.title}</span>`;
+        folderBtn.title = node.title || "";
+        folderBtn.innerHTML = ICONS.folder;
+
+        const span = document.createElement("span");
+        span.className = "title";
+        span.textContent = node.title || "";
+        folderBtn.appendChild(span);
 
         folderBtn.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -493,19 +532,22 @@
     closeAllMenus();
     ui.folderDropdown.innerHTML = "";
 
-    if (!children || children.length === 0) {
+    const validChildren = Array.isArray(children)
+      ? children.filter((child) => child && isSafeUrl(child.url))
+      : [];
+
+    if (validChildren.length === 0) {
       const empty = document.createElement("div");
       empty.className = "menu-row";
       empty.style.color = "var(--text-muted)";
       empty.textContent = "(Pasta vazia)";
       ui.folderDropdown.appendChild(empty);
     } else {
-      children.forEach((child) => {
-        if (!child.url) return;
+      validChildren.forEach((child) => {
         const link = document.createElement("a");
         link.className = "menu-row";
         link.href = child.url;
-        link.title = `${child.title}\n${child.url}`;
+        link.title = `${child.title || ""}\n${child.url}`;
 
         const left = document.createElement("div");
         left.className = "menu-row-left";
@@ -579,7 +621,7 @@
         e.stopPropagation();
         saveSetting({ engine: opt.id }, () => {
           closeAllMenus();
-          if (enginesMap[opt.id]) {
+          if (enginesMap[opt.id] && isSafeUrl(enginesMap[opt.id])) {
             window.location.href = enginesMap[opt.id];
           }
         });
@@ -632,7 +674,7 @@
     accelBtn.innerHTML = `
       <div class="menu-row-left">
         <span class="check-slot">${currentSettings.acceleration ? ICONS.check : ""}</span>
-        <span>Aceleração da Home (Instant Load)</span>
+        <span>Aceleração da Home</span>
       </div>
     `;
     accelBtn.addEventListener("click", (e) => {
@@ -677,7 +719,7 @@
     editFavBtn.innerHTML = `
       <div class="menu-row-left">
         <span class="check-slot">${ICONS.starEdit}</span>
-        <span>Editar favoritos (edge://favorites)</span>
+        <span>Editar favoritos</span>
       </div>
     `;
     editFavBtn.addEventListener("click", (e) => {
@@ -804,27 +846,26 @@
       updateBarVisibilityState();
     });
 
-    window.addEventListener(
-      "mousemove",
-      (e) => {
-        if (!ui || shouldBarBeDocked()) return;
+    const onWindowMouseMove = (e) => {
+      if (!ui || shouldBarBeDocked()) return;
 
-        if (e.clientY <= 8) {
-          if (!ui.isHoverRevealed) {
-            clearTimeout(hoverTimer);
-            hoverTimer = setTimeout(() => {
-              ui.isHoverRevealed = true;
-              updateBarVisibilityState();
-            }, 40);
-          }
-        } else if (ui.isHoverRevealed && e.clientY > 46 && !ui.isMenuOpen) {
+      if (e.clientY <= 8) {
+        if (!ui.isHoverRevealed) {
           clearTimeout(hoverTimer);
-          ui.isHoverRevealed = false;
-          updateBarVisibilityState();
+          hoverTimer = setTimeout(() => {
+            if (!ui) return;
+            ui.isHoverRevealed = true;
+            updateBarVisibilityState();
+          }, 40);
         }
-      },
-      { passive: true }
-    );
+      } else if (ui.isHoverRevealed && e.clientY > 46 && !ui.isMenuOpen) {
+        clearTimeout(hoverTimer);
+        ui.isHoverRevealed = false;
+        updateBarVisibilityState();
+      }
+    };
+
+    window.addEventListener("mousemove", onWindowMouseMove, { passive: true });
 
     ui.wrapper.addEventListener("mouseenter", () => {
       clearTimeout(hoverTimer);
@@ -839,21 +880,34 @@
       }
     });
 
-    document.addEventListener("click", () => {
+    const onDocumentClick = () => {
       if (ui && ui.isMenuOpen) closeAllMenus();
-    });
+    };
+    document.addEventListener("click", onDocumentClick);
 
     let lastHref = window.location.href;
     const checkUrlChange = () => {
+      if (!ui) return;
       if (window.location.href !== lastHref) {
         lastHref = window.location.href;
         ui.isHoverRevealed = false;
         closeAllMenus();
         updateBarVisibilityState();
+        injectSpeculationRules();
       }
     };
+
     window.addEventListener("popstate", checkUrlChange);
-    setInterval(checkUrlChange, 250);
+    const urlIntervalId = setInterval(checkUrlChange, 250);
+
+    // Registra limpeza para evitar Memory Leaks caso a barra seja desmontada
+    ui.cleanupFns.push(() => {
+      clearTimeout(hoverTimer);
+      clearInterval(urlIntervalId);
+      window.removeEventListener("mousemove", onWindowMouseMove);
+      window.removeEventListener("popstate", checkUrlChange);
+      document.removeEventListener("click", onDocumentClick);
+    });
   }
 
   // Extrai a cor de fundo real da página (verificando body e html) após o carregamento
@@ -876,6 +930,9 @@
 
   // Valida a cor real da página depois que ela carrega; só altera se divergir do memorizado
   function setupThemeAndColorSync() {
+    let debounceTimer = null;
+    let observer = null;
+
     function validateAndApplyTheme() {
       if (!ui) return;
 
@@ -914,10 +971,16 @@
       memorizeTheme({ theme: detectedTheme, bgBar: detectedBgBar });
     }
 
+    function debouncedValidateTheme() {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(validateAndApplyTheme, 100);
+    }
+
     const startWatching = () => {
+      if (!ui) return;
       validateAndApplyTheme();
 
-      const observer = new MutationObserver(validateAndApplyTheme);
+      observer = new MutationObserver(debouncedValidateTheme);
       observer.observe(document.documentElement, {
         attributes: true,
         attributeFilter: ["class", "style", "dark", "data-theme"]
@@ -937,14 +1000,21 @@
       startWatching();
     }
 
-    window
-      .matchMedia("(prefers-color-scheme: dark)")
-      .addEventListener("change", validateAndApplyTheme);
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    mediaQuery.addEventListener("change", validateAndApplyTheme);
+
+    ui.cleanupFns.push(() => {
+      clearTimeout(debounceTimer);
+      if (observer) observer.disconnect();
+      document.removeEventListener("DOMContentLoaded", startWatching);
+      window.removeEventListener("load", validateAndApplyTheme);
+      mediaQuery.removeEventListener("change", validateAndApplyTheme);
+    });
   }
 
-  // CAMADA 3 DE ACELERAÇÃO: Speculation Rules API (aguarda o <head> existir caso rode em document_start)
+  // CAMADA 3 DE ACELERAÇÃO: Speculation Rules API (ativa ao sair da Home para manter a volta instantânea)
   function injectSpeculationRules() {
-    if (!currentSettings?.acceleration) return;
+    if (!currentSettings?.acceleration || isSearchHomePage()) return;
 
     const appendRules = () => {
       if (!document.head || document.getElementById("mnt-speculation-rules")) return;

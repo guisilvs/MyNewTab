@@ -2,7 +2,13 @@
   "manifest_version": 3,
   "name": "My New Tab",
   "version": "2.0",
-  "description": "Nova guia ultrarrápida com barra de favoritos Fluent UI integrada ao seu buscador favorito.",
+  "description": "Personalize a Home do seu Microsoft Edge com seu buscador preferido e com barra de favoritos inteligente",
+  "icons": {
+    "16": "assets/icons/icon-16.png",
+    "32": "assets/icons/icon-32.png",
+    "48": "assets/icons/icon-48.png",
+    "128": "assets/icons/icon-128.png"
+  },
   "permissions": [
     "bookmarks",
     "favicon",
@@ -11,11 +17,11 @@
     "alarms"
   ],
   "host_permissions": [
-    "*://*.google.com/*",
-    "*://*.google.com.br/*",
-    "*://*.duckduckgo.com/*",
+    "*://www.google.com/*",
+    "*://www.google.com.br/*",
+    "*://duckduckgo.com/*",
     "*://*.search.yahoo.com/*",
-    "*://*.search.brave.com/*"
+    "*://search.brave.com/*"
   ],
   "chrome_url_overrides": {
     "newtab": "newtab.html"
@@ -45,7 +51,8 @@
         "*://duckduckgo.com/*",
         "*://*.search.yahoo.com/*",
         "*://search.brave.com/*"
-      ]
+      ],
+      "use_dynamic_url": true
     }
   ]
 }
