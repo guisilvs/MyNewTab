@@ -17,15 +17,15 @@
     "alarms"
   ],
   "host_permissions": [
-    "*://www.google.com/*",
-    "*://www.google.com.br/*",
-    "*://duckduckgo.com/*",
-    "*://*.search.yahoo.com/*",
-    "*://search.brave.com/*",
-    "*://gemini.google.com/*",
-    "*://claude.ai/*",
-    "*://chatgpt.com/*",
-    "*://www.perplexity.ai/*"
+    "https://www.google.com/*",
+    "https://www.google.com.br/*",
+    "https://duckduckgo.com/*",
+    "https://*.search.yahoo.com/*",
+    "https://search.brave.com/*",
+    "https://gemini.google.com/*",
+    "https://claude.ai/*",
+    "https://chatgpt.com/*",
+    "https://www.perplexity.ai/*"
   ],
   "chrome_url_overrides": {
     "newtab": "newtab.html"
@@ -36,15 +36,15 @@
   "content_scripts": [
     {
       "matches": [
-        "*://www.google.com/*",
-        "*://www.google.com.br/*",
-        "*://duckduckgo.com/*",
-        "*://*.search.yahoo.com/*",
-        "*://search.brave.com/*",
-        "*://gemini.google.com/*",
-        "*://claude.ai/*",
-        "*://chatgpt.com/*",
-        "*://www.perplexity.ai/*"
+        "https://www.google.com/*",
+        "https://www.google.com.br/*",
+        "https://duckduckgo.com/*",
+        "https://*.search.yahoo.com/*",
+        "https://search.brave.com/*",
+        "https://gemini.google.com/*",
+        "https://claude.ai/*",
+        "https://chatgpt.com/*",
+        "https://www.perplexity.ai/*"
       ],
       "js": ["content.js"],
       "run_at": "document_start"
@@ -54,17 +54,20 @@
     {
       "resources": ["_favicon/*"],
       "matches": [
-        "*://www.google.com/*",
-        "*://www.google.com.br/*",
-        "*://duckduckgo.com/*",
-        "*://*.search.yahoo.com/*",
-        "*://search.brave.com/*",
-        "*://gemini.google.com/*",
-        "*://claude.ai/*",
-        "*://chatgpt.com/*",
-        "*://www.perplexity.ai/*"
+        "https://www.google.com/*",
+        "https://www.google.com.br/*",
+        "https://duckduckgo.com/*",
+        "https://*.search.yahoo.com/*",
+        "https://search.brave.com/*",
+        "https://gemini.google.com/*",
+        "https://claude.ai/*",
+        "https://chatgpt.com/*",
+        "https://www.perplexity.ai/*"
       ],
       "use_dynamic_url": true
     }
-  ]
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';"
+  }
 }
