@@ -21,7 +21,11 @@
     "*://www.google.com.br/*",
     "*://duckduckgo.com/*",
     "*://*.search.yahoo.com/*",
-    "*://search.brave.com/*"
+    "*://search.brave.com/*",
+    "*://gemini.google.com/*",
+    "*://claude.ai/*",
+    "*://chatgpt.com/*",
+    "*://www.perplexity.ai/*"
   ],
   "chrome_url_overrides": {
     "newtab": "newtab.html"
@@ -36,7 +40,11 @@
         "*://www.google.com.br/*",
         "*://duckduckgo.com/*",
         "*://*.search.yahoo.com/*",
-        "*://search.brave.com/*"
+        "*://search.brave.com/*",
+        "*://gemini.google.com/*",
+        "*://claude.ai/*",
+        "*://chatgpt.com/*",
+        "*://www.perplexity.ai/*"
       ],
       "js": ["content.js"],
       "run_at": "document_start"
@@ -50,7 +58,11 @@
         "*://www.google.com.br/*",
         "*://duckduckgo.com/*",
         "*://*.search.yahoo.com/*",
-        "*://search.brave.com/*"
+        "*://search.brave.com/*",
+        "*://gemini.google.com/*",
+        "*://claude.ai/*",
+        "*://chatgpt.com/*",
+        "*://www.perplexity.ai/*"
       ],
       "use_dynamic_url": true
     }

@@ -2,7 +2,11 @@ const ENGINES = {
   google: "https://www.google.com/",
   duckduckgo: "https://duckduckgo.com/",
   yahoo: "https://br.search.yahoo.com/",
-  brave: "https://search.brave.com/"
+  brave: "https://search.brave.com/",
+  gemini: "https://gemini.google.com/",
+  claude: "https://claude.ai/",
+  chatgpt: "https://chatgpt.com/",
+  perplexity: "https://www.perplexity.ai/"
 };
 
 const VALID_VISIBILITY = new Set(["home_only", "always", "never"]);
@@ -95,6 +99,7 @@ chrome.storage.onChanged.addListener((changes) => {
 
 // CAMADA 1 DE ACELERAÇÃO: Intercepta a Nova Guia instantaneamente (suporta protocolos do Edge e Chrome)
 chrome.tabs.onCreated.addListener((tab) => {
+  if (!tab || typeof tab.id !== "number") return;
   const pending = tab.pendingUrl || tab.url || "";
   const extId = chrome.runtime.id;
   const isNewTab =
@@ -105,16 +110,24 @@ chrome.tabs.onCreated.addListener((tab) => {
 
   if (!isNewTab) return;
 
-  const redirectTab = (settings) => {
-    if (!settings.acceleration) return;
-    const targetUrl = ENGINES[settings.engine] || ENGINES.google;
-    chrome.tabs.update(tab.id, { url: targetUrl });
-  };
-
   if (isCacheReady) {
-    redirectTab(cachedSettings);
+    if (!cachedSettings.acceleration) return;
+    const targetUrl = ENGINES[cachedSettings.engine] || ENGINES.google;
+    chrome.tabs.update(tab.id, { url: targetUrl }, () => {
+      void chrome.runtime.lastError;
+    });
   } else {
-    syncSettingsCache(redirectTab);
+    syncSettingsCache((settings) => {
+      if (!settings.acceleration) return;
+      const targetUrl = ENGINES[settings.engine] || ENGINES.google;
+      chrome.tabs.get(tab.id, (currentTab) => {
+        if (chrome.runtime.lastError || !currentTab) return;
+        if (currentTab.pendingUrl === targetUrl || currentTab.url === targetUrl) return;
+        chrome.tabs.update(tab.id, { url: targetUrl }, () => {
+          void chrome.runtime.lastError;
+        });
+      });
+    });
   }
 });
 
@@ -131,16 +144,20 @@ function warmUpEngine() {
 }
 
 function setupPreWarmer() {
-  chrome.alarms.clear("engineWarmer", () => {
-    if (cachedSettings.acceleration) {
-      warmUpEngine();
+  if (!cachedSettings.acceleration) {
+    chrome.alarms.clear("engineWarmer");
+    return;
+  }
+  warmUpEngine();
+  chrome.alarms.get("engineWarmer", (existing) => {
+    if (!existing) {
       chrome.alarms.create("engineWarmer", { periodInMinutes: 0.75 });
     }
   });
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "engineWarmer") {
+  if (alarm.name === "engineWarmer" && isCacheReady) {
     warmUpEngine();
   }
 });

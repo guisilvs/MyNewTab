@@ -23,6 +23,12 @@
 
   function detectCurrentEngine() {
     const host = window.location.hostname;
+    if (host === "gemini.google.com") return "gemini";
+    if (host === "claude.ai" || host.endsWith(".claude.ai")) return "claude";
+    if (host === "chatgpt.com" || host.endsWith(".chatgpt.com")) return "chatgpt";
+    if (host === "www.perplexity.ai" || host === "perplexity.ai" || host.endsWith(".perplexity.ai")) {
+      return "perplexity";
+    }
     if (host.includes("google.")) return "google";
     if (host.includes("duckduckgo.")) return "duckduckgo";
     if (host.includes("yahoo.")) return "yahoo";
@@ -46,6 +52,18 @@
     }
     if (engine === "brave") {
       return !path.startsWith("/search") && !params.has("q");
+    }
+    if (engine === "gemini") {
+      return (path === "/" || path === "" || path === "/app" || path === "/app/") && !params.has("q");
+    }
+    if (engine === "claude") {
+      return (path === "/" || path === "" || path === "/new" || path === "/new/") && !params.has("q");
+    }
+    if (engine === "chatgpt") {
+      return (path === "/" || path === "") && !params.has("q");
+    }
+    if (engine === "perplexity") {
+      return (path === "/" || path === "") && !params.has("q");
     }
     return false;
   }
@@ -164,6 +182,9 @@
         } catch (e) {}
       });
     }
+    clearFixedTopAttributes();
+    const specScript = document.getElementById("mnt-speculation-rules");
+    if (specScript) specScript.remove();
     ui.host.remove();
     ui.pageStyle.remove();
     ui = null;
@@ -638,11 +659,18 @@
     if (!ui) return;
     ui.settingsMenu.innerHTML = "";
 
-    const engineOptions = [
+    const searchEngineOptions = [
       { id: "google", label: "Google" },
       { id: "duckduckgo", label: "DuckDuckGo" },
       { id: "yahoo", label: "Yahoo Search" },
       { id: "brave", label: "Brave Search" }
+    ];
+
+    const aiEngineOptions = [
+      { id: "gemini", label: "Gemini" },
+      { id: "claude", label: "Claude" },
+      { id: "chatgpt", label: "Chat GPT" },
+      { id: "perplexity", label: "Perplexity" }
     ];
 
     const visibilityOptions = [
@@ -664,7 +692,7 @@
     const engineSubmenu = document.createElement("div");
     engineSubmenu.className = "submenu";
 
-    engineOptions.forEach((opt) => {
+    const createEngineOptionBtn = (opt) => {
       const btn = document.createElement("button");
       btn.className = "menu-row";
       const isSelected = currentSettings.engine === opt.id;
@@ -683,8 +711,21 @@
           }
         });
       });
-      engineSubmenu.appendChild(btn);
+      return btn;
+    };
+
+    searchEngineOptions.forEach((opt) => {
+      engineSubmenu.appendChild(createEngineOptionBtn(opt));
     });
+
+    const engineGroupDivider = document.createElement("div");
+    engineGroupDivider.className = "menu-divider";
+    engineSubmenu.appendChild(engineGroupDivider);
+
+    aiEngineOptions.forEach((opt) => {
+      engineSubmenu.appendChild(createEngineOptionBtn(opt));
+    });
+
     engineRow.appendChild(engineSubmenu);
 
     const visRow = document.createElement("div");
@@ -737,6 +778,7 @@
     accelBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       saveSetting({ acceleration: !currentSettings.acceleration }, () => {
+        injectSpeculationRules();
         renderSettingsMenu();
         closeAllMenus();
       });
@@ -845,6 +887,82 @@
     return isSearchHomePage();
   }
 
+  function clearFixedTopAttributes() {
+    document.querySelectorAll("[data-mnt-fixed-top], [data-mnt-fixed-full]").forEach((el) => {
+      el.removeAttribute("data-mnt-fixed-top");
+      el.removeAttribute("data-mnt-fixed-full");
+      el.style.removeProperty("--mnt-orig-top");
+    });
+  }
+
+  function adjustFixedTopElements() {
+    if (!ui || !shouldBarBeDocked() || !document.body) return;
+
+    const candidates = new Set();
+
+    document.body
+      .querySelectorAll(
+        'header, nav, aside, [role="banner"], [role="navigation"], #gb, #searchform, .sfbg, #hd, #ybar, .header-wrap'
+      )
+      .forEach((el) => candidates.add(el));
+
+    const sampleYs = [6, 18, 30];
+    const w = window.innerWidth || 1024;
+    const sampleXs = [
+      16,
+      48,
+      120,
+      Math.floor(w * 0.25),
+      Math.floor(w * 0.5),
+      Math.floor(w * 0.75),
+      w - 120,
+      w - 48,
+      w - 16
+    ];
+
+    for (const y of sampleYs) {
+      for (const x of sampleXs) {
+        if (x <= 0) continue;
+        const hits = document.elementsFromPoint(x, y);
+        for (const hit of hits) {
+          const chain = [];
+          let curr = hit;
+          while (curr && curr !== document.body && curr !== document.documentElement) {
+            if (curr !== ui.host) chain.push(curr);
+            curr = curr.parentElement;
+          }
+          for (let i = chain.length - 1; i >= 0; i--) {
+            candidates.add(chain[i]);
+          }
+        }
+      }
+    }
+
+    candidates.forEach((el) => {
+      if (!el || el === ui.host || el.hasAttribute("data-mnt-fixed-top")) return;
+      if (el.parentElement && el.parentElement.closest('[data-mnt-fixed-top="true"]')) return;
+
+      const cs = window.getComputedStyle(el);
+      if (cs.position !== "fixed" && cs.position !== "sticky") return;
+
+      const rect = el.getBoundingClientRect();
+      const parsedTop = parseFloat(cs.top);
+      const origTop = Number.isFinite(parsedTop) ? parsedTop : 0;
+
+      const isFixedInBarZone = cs.position === "fixed" && rect.top >= -2 && rect.top < 34;
+      const isStickyTopHeader = cs.position === "sticky" && origTop >= 0 && origTop < 34 && rect.top <= 48;
+
+      if ((isFixedInBarZone || isStickyTopHeader) && origTop >= -2 && origTop < 34) {
+        el.style.setProperty("--mnt-orig-top", `${Math.max(0, origTop)}px`);
+        el.setAttribute("data-mnt-fixed-top", "true");
+
+        if (cs.position === "fixed" && rect.height >= window.innerHeight - 10) {
+          el.setAttribute("data-mnt-fixed-full", "true");
+        }
+      }
+    });
+  }
+
   function updateBarVisibilityState() {
     if (!ui) return;
     const docked = shouldBarBeDocked();
@@ -854,14 +972,39 @@
       ui.pageStyle.textContent = `
         html {
           padding-top: 34px !important;
-          box-sizing: border-box;
+          box-sizing: border-box !important;
+        }
+        body {
+          position: relative !important;
+          box-sizing: border-box !important;
+        }
+        .h-screen, .h-dvh, .h-svh,
+        chat-app, bard-sidenav-container {
+          height: calc(100dvh - 34px) !important;
+          max-height: calc(100dvh - 34px) !important;
+        }
+        .min-h-screen, .min-h-dvh, .min-h-svh {
+          min-height: calc(100dvh - 34px) !important;
         }
         #searchform, .sfbg, header[role="banner"], .header-wrap {
           margin-top: 0px;
         }
+        #searchform.minidiv {
+          top: 34px !important;
+        }
+        [data-mnt-fixed-top="true"] {
+          top: calc(var(--mnt-orig-top, 0px) + 34px) !important;
+        }
+        [data-mnt-fixed-full="true"] {
+          height: calc(100dvh - 34px) !important;
+          max-height: calc(100dvh - 34px) !important;
+        }
       `;
+      adjustFixedTopElements();
+      requestAnimationFrame(adjustFixedTopElements);
     } else {
       ui.pageStyle.textContent = "";
+      clearFixedTopAttributes();
       if (ui.isHoverRevealed || ui.isMenuOpen) {
         ui.wrapper.classList.remove("hidden");
         ui.wrapper.classList.add("floating-open");
@@ -939,8 +1082,24 @@
 
     const onDocumentClick = () => {
       if (ui && ui.isMenuOpen) closeAllMenus();
+      if (ui && shouldBarBeDocked()) {
+        setTimeout(adjustFixedTopElements, 60);
+      }
     };
     document.addEventListener("click", onDocumentClick);
+
+    let scrollRafId = null;
+    const onLayoutShiftOrScroll = () => {
+      if (!ui || !shouldBarBeDocked() || scrollRafId) return;
+      scrollRafId = requestAnimationFrame(() => {
+        scrollRafId = null;
+        adjustFixedTopElements();
+      });
+    };
+    window.addEventListener("scroll", onLayoutShiftOrScroll, { passive: true });
+    window.addEventListener("resize", onLayoutShiftOrScroll, { passive: true });
+    document.addEventListener("DOMContentLoaded", adjustFixedTopElements, { once: true });
+    window.addEventListener("load", adjustFixedTopElements, { once: true });
 
     let lastHref = window.location.href;
     const checkUrlChange = () => {
@@ -961,16 +1120,24 @@
     ui.cleanupFns.push(() => {
       clearTimeout(hoverTimer);
       clearInterval(urlIntervalId);
+      if (scrollRafId) cancelAnimationFrame(scrollRafId);
       window.removeEventListener("mousemove", onWindowMouseMove);
       window.removeEventListener("popstate", checkUrlChange);
+      window.removeEventListener("scroll", onLayoutShiftOrScroll);
+      window.removeEventListener("resize", onLayoutShiftOrScroll);
+      document.removeEventListener("DOMContentLoaded", adjustFixedTopElements);
+      window.removeEventListener("load", adjustFixedTopElements);
       document.removeEventListener("click", onDocumentClick);
     });
   }
 
-  // Extrai a cor de fundo real da página (verificando body e html) após o carregamento completo
+  // Extrai a cor de fundo real da página (verificando body, html e container raiz de SPAs) após o carregamento completo
   function extractPageColor() {
     const engine = detectCurrentEngine();
-    const candidates = [document.body, document.documentElement].filter(Boolean);
+    const rootApp = document.body
+      ? document.body.querySelector("chat-app, #__next, #root, #app, main") || document.body.firstElementChild
+      : null;
+    const candidates = [document.body, document.documentElement, rootApp].filter(Boolean);
     for (const el of candidates) {
       const style = window.getComputedStyle(el);
       const bg = style.backgroundColor;
@@ -992,8 +1159,8 @@
           }
         }
 
-        // No Google, o canvas nativo escuro pode reportar preto puro (#000000) antes do estilo aplicar
-        if (engine === "google" && r === 0 && g === 0 && b === 0) {
+        // No Google e Gemini, o canvas nativo escuro pode reportar preto puro (#000000) antes do estilo aplicar
+        if ((engine === "google" || engine === "gemini") && r === 0 && g === 0 && b === 0) {
           continue;
         }
 
@@ -1061,17 +1228,19 @@
     const startWatchingAfterLoad = () => {
       if (!ui) return;
       validateAndApplyTheme();
+      adjustFixedTopElements();
 
       if (observer) observer.disconnect();
+      const attrFilter = ["class", "style", "dark", "data-theme", "data-mode", "data-color-scheme"];
       observer = new MutationObserver(debouncedValidateTheme);
       observer.observe(document.documentElement, {
         attributes: true,
-        attributeFilter: ["class", "style", "dark", "data-theme"]
+        attributeFilter: attrFilter
       });
       if (document.body) {
         observer.observe(document.body, {
           attributes: true,
-          attributeFilter: ["class", "style", "dark", "data-theme"]
+          attributeFilter: attrFilter
         });
       }
     };
@@ -1102,9 +1271,15 @@
 
   // CAMADA 3 DE ACELERAÇÃO: Speculation Rules API (ativa ao sair da Home para manter a volta instantânea)
   function injectSpeculationRules() {
-    if (!currentSettings?.acceleration || isSearchHomePage()) return;
+    const existing = document.getElementById("mnt-speculation-rules");
+    if (!currentSettings?.acceleration || isSearchHomePage()) {
+      if (existing) existing.remove();
+      return;
+    }
+    if (existing) return;
 
     const appendRules = () => {
+      if (!currentSettings?.acceleration || isSearchHomePage()) return;
       if (!document.head || document.getElementById("mnt-speculation-rules")) return;
       const specScript = document.createElement("script");
       specScript.id = "mnt-speculation-rules";
