@@ -473,6 +473,36 @@
       .menu-row.has-submenu.open > .submenu {
         display: flex;
       }
+
+      .menu-row.menu-row-about {
+        justify-content: center;
+        text-align: center;
+        opacity: 0.55;
+        font-size: 11.5px;
+      }
+
+      .menu-row.menu-row-about:hover {
+        opacity: 0.9;
+      }
+
+      .about-header {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 6px 10px;
+        user-select: none;
+      }
+
+      .about-title {
+        font-size: 12.5px;
+        font-weight: 600;
+        color: var(--text-color);
+      }
+
+      .about-author {
+        font-size: 11.5px;
+        color: var(--text-muted);
+      }
     `;
 
     const wrapper = document.createElement("div");
@@ -499,7 +529,7 @@
 
     const moreBtn = document.createElement("button");
     moreBtn.className = "more-btn";
-    moreBtn.title = "Mais opções da barra (My New Tab)";
+    moreBtn.title = "Mais opções";
     moreBtn.innerHTML = ICONS.more;
 
     const settingsMenu = document.createElement("div");
@@ -801,12 +831,70 @@
       chrome.runtime.sendMessage({ action: "openFavoritesManager" });
     });
 
+    const aboutBtn = document.createElement("button");
+    aboutBtn.className = "menu-row menu-row-about";
+    aboutBtn.textContent = "My New Tab";
+    aboutBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      renderAboutMenu();
+    });
+
     ui.settingsMenu.appendChild(engineRow);
     ui.settingsMenu.appendChild(visRow);
     ui.settingsMenu.appendChild(divider1);
     ui.settingsMenu.appendChild(accelBtn);
     ui.settingsMenu.appendChild(divider2);
     ui.settingsMenu.appendChild(favManagerBtn);
+    ui.settingsMenu.appendChild(aboutBtn);
+  }
+
+  function renderAboutMenu() {
+    if (!ui) return;
+    ui.settingsMenu.textContent = "";
+
+    const version = chrome.runtime.getManifest?.()?.version || "2.0";
+
+    const header = document.createElement("div");
+    header.className = "about-header";
+
+    const title = document.createElement("div");
+    title.className = "about-title";
+    title.textContent = `My New Tab ${version}`;
+
+    const author = document.createElement("div");
+    author.className = "about-author";
+    author.textContent = "Criado por Guilherme Silveira";
+
+    header.appendChild(title);
+    header.appendChild(author);
+
+    const divider = document.createElement("div");
+    divider.className = "menu-divider";
+
+    const linkedinLink = document.createElement("a");
+    linkedinLink.className = "menu-row";
+    linkedinLink.href = "https://www.linkedin.com/in/guisilveira01/";
+    linkedinLink.target = "_blank";
+    linkedinLink.rel = "noopener noreferrer";
+    linkedinLink.textContent = "Linkedin @guisilveira01";
+    linkedinLink.addEventListener("click", () => {
+      closeAllMenus();
+    });
+
+    const githubLink = document.createElement("a");
+    githubLink.className = "menu-row";
+    githubLink.href = "https://github.com/guisilvs";
+    githubLink.target = "_blank";
+    githubLink.rel = "noopener noreferrer";
+    githubLink.textContent = "GitHub @guisilvs";
+    githubLink.addEventListener("click", () => {
+      closeAllMenus();
+    });
+
+    ui.settingsMenu.appendChild(header);
+    ui.settingsMenu.appendChild(divider);
+    ui.settingsMenu.appendChild(linkedinLink);
+    ui.settingsMenu.appendChild(githubLink);
   }
 
   function renderContextMenu() {
