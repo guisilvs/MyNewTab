@@ -140,7 +140,8 @@
     more: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`,
     chevronRight: `<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M4.5 2.25L8.25 6L4.5 9.75" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>`,
     check: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5L6.5 11.5L12.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-    starEdit: `<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.5L9.85 5.25L14 5.85L11 8.77L11.7 12.9L8 10.95L4.3 12.9L5 8.77L2 5.85L6.15 5.25L8 1.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>`
+    starEdit: `<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.5L9.85 5.25L14 5.85L11 8.77L11.7 12.9L8 10.95L4.3 12.9L5 8.77L2 5.85L6.15 5.25L8 1.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>`,
+    close: `<svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M3 3L9 9M9 3L3 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
   };
 
   chrome.runtime.sendMessage({ action: "initData" }, (response) => {
@@ -152,10 +153,28 @@
     evaluateActivation();
   });
 
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg && msg.action === "bookmarksUpdated" && ui) {
+  chrome.runtime.onMessage.addListener((msg, sender) => {
+    if (!sender || sender.id !== chrome.runtime.id || !msg) return;
+    if (msg.action === "bookmarksUpdated" && ui) {
       currentBookmarks = msg.items || [];
       renderBookmarksList();
+      if (ui.collectionsController) {
+        ui.collectionsController.onExternalDataUpdated({ bookmarksChanged: true });
+      }
+    }
+    if (msg.action === "settingsUpdated" && msg.settings) {
+      currentSettings = { ...currentSettings, ...msg.settings };
+      if (ui) {
+        if (!currentSettings.smartClipboard) {
+          hideClipboardSuggestion();
+        }
+        if (ui.clipboardController) {
+          ui.clipboardController.syncWithSettings();
+        }
+        if (ui.collectionsController) {
+          ui.collectionsController.onExternalDataUpdated({ settingsChanged: true });
+        }
+      }
     }
   });
 
@@ -228,6 +247,11 @@
         --menu-border: rgba(0, 0, 0, 0.12);
         --menu-shadow: 0 8px 24px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.08);
         --divider: rgba(0, 0, 0, 0.08);
+        --capsule-bg: rgba(255, 255, 255, 0.96);
+        --capsule-border-grad: linear-gradient(135deg, #2563eb 0%, #0284c7 52%, #06b6d4 100%);
+        --capsule-glow: 0 2px 10px rgba(14, 165, 233, 0.16), 0 1px 3px rgba(37, 99, 235, 0.10);
+        --capsule-glow-hover: 0 3px 14px rgba(14, 165, 233, 0.25), 0 1px 4px rgba(37, 99, 235, 0.16);
+        --capsule-cat-color: #0284c7;
       }
 
       :host([data-theme="dark"]) {
@@ -241,6 +265,11 @@
         --menu-border: rgba(255, 255, 255, 0.14);
         --menu-shadow: 0 8px 28px rgba(0, 0, 0, 0.50), 0 2px 6px rgba(0, 0, 0, 0.35);
         --divider: rgba(255, 255, 255, 0.10);
+        --capsule-bg: rgba(19, 24, 32, 0.95);
+        --capsule-border-grad: linear-gradient(135deg, #3b82f6 0%, #0ea5e9 52%, #14b8a6 100%);
+        --capsule-glow: 0 2px 12px rgba(14, 165, 233, 0.22), 0 0 6px rgba(20, 184, 166, 0.12);
+        --capsule-glow-hover: 0 3px 16px rgba(14, 165, 233, 0.32), 0 0 8px rgba(20, 184, 166, 0.18);
+        --capsule-cat-color: #38bdf8;
       }
 
       .bar-wrapper {
@@ -288,6 +317,132 @@
         flex: 1;
         height: 100%;
         padding-right: 6px;
+        opacity: 1;
+        transform: scale(1);
+        transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+
+      .bar-wrapper.has-suggestion .bookmarks-strip {
+        opacity: 0;
+        pointer-events: none;
+        transform: scale(0.99);
+      }
+
+      .smart-clipboard-layer {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 38px;
+        right: 38px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+        opacity: 0;
+        transform: translateY(-2px) scale(0.97);
+        transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+
+      .bar-wrapper.has-suggestion .smart-clipboard-layer {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+
+      .smart-capsule {
+        display: inline-flex;
+        align-items: center;
+        height: 24px;
+        max-width: min(460px, calc(100vw - 96px));
+        border-radius: 999px;
+        border: 1px solid transparent;
+        background: linear-gradient(var(--capsule-bg), var(--capsule-bg)) padding-box, var(--capsule-border-grad) border-box;
+        box-shadow: var(--capsule-glow);
+        padding: 0 4px 0 10px;
+        gap: 4px;
+        box-sizing: border-box;
+        pointer-events: none;
+        transition: box-shadow 0.18s ease, transform 0.15s ease;
+      }
+
+      .bar-wrapper.has-suggestion .smart-capsule {
+        pointer-events: auto;
+      }
+
+      .smart-capsule:hover {
+        box-shadow: var(--capsule-glow-hover);
+      }
+
+      .capsule-main {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        height: 100%;
+        padding: 0;
+        margin: 0;
+        border: none;
+        background: transparent;
+        color: var(--text-color);
+        font-family: var(--mnt-font);
+        font-size: 12px;
+        cursor: pointer;
+        overflow: hidden;
+        min-width: 0;
+      }
+
+      .capsule-cat {
+        font-weight: 600;
+        font-size: 11px;
+        color: var(--capsule-cat-color);
+        letter-spacing: 0.01em;
+        flex-shrink: 0;
+        line-height: 1;
+      }
+
+      .capsule-sep {
+        width: 1px;
+        height: 12px;
+        background-color: var(--divider);
+        flex-shrink: 0;
+      }
+
+      .capsule-text {
+        color: var(--text-color);
+        font-size: 12px;
+        font-weight: 400;
+        white-space: nowrap;
+        overflow: hidden;
+        max-width: 240px;
+        line-height: 1.2;
+        margin-right: 4px;
+      }
+
+      .capsule-text.fade-end {
+        margin-right: 0;
+        padding-right: 6px;
+        -webkit-mask-image: linear-gradient(to right, #000 66%, transparent 100%);
+        mask-image: linear-gradient(to right, #000 66%, transparent 100%);
+      }
+
+      .capsule-close {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        padding: 0;
+        margin: 0;
+        border: none;
+        border-radius: 999px;
+        background: transparent;
+        color: var(--text-muted);
+        cursor: pointer;
+        flex-shrink: 0;
+        transition: background-color 0.12s ease, color 0.12s ease;
+      }
+
+      .capsule-close:hover {
+        background-color: var(--hover-bg);
+        color: var(--text-color);
       }
 
       .bookmarks-strip::-webkit-scrollbar {
@@ -474,6 +629,16 @@
         display: flex;
       }
 
+      .menu-row.sub-setting-row {
+        font-size: 12px;
+        min-height: 28px;
+        opacity: 0.92;
+      }
+
+      .menu-row.sub-setting-row .menu-row-left {
+        padding-left: 8px;
+      }
+
       .menu-row.menu-row-about {
         justify-content: center;
         text-align: center;
@@ -503,6 +668,8 @@
         font-size: 11.5px;
         color: var(--text-muted);
       }
+
+      ${window.MNT_Collections ? window.MNT_Collections.getStyles() : ""}
     `;
 
     const wrapper = document.createElement("div");
@@ -527,6 +694,39 @@
     const strip = document.createElement("div");
     strip.className = "bookmarks-strip";
 
+    const clipboardLayer = document.createElement("div");
+    clipboardLayer.className = "smart-clipboard-layer";
+
+    const capsule = document.createElement("div");
+    capsule.className = "smart-capsule";
+
+    const capsuleMain = document.createElement("button");
+    capsuleMain.className = "capsule-main";
+    capsuleMain.type = "button";
+
+    const capsuleCat = document.createElement("span");
+    capsuleCat.className = "capsule-cat";
+
+    const capsuleSep1 = document.createElement("span");
+    capsuleSep1.className = "capsule-sep";
+
+    const capsuleText = document.createElement("span");
+    capsuleText.className = "capsule-text";
+
+    capsuleMain.appendChild(capsuleCat);
+    capsuleMain.appendChild(capsuleSep1);
+    capsuleMain.appendChild(capsuleText);
+
+    const capsuleClose = document.createElement("button");
+    capsuleClose.className = "capsule-close";
+    capsuleClose.type = "button";
+    capsuleClose.title = "Ignorar sugestão";
+    capsuleClose.innerHTML = ICONS.close;
+
+    capsule.appendChild(capsuleMain);
+    capsule.appendChild(capsuleClose);
+    clipboardLayer.appendChild(capsule);
+
     const moreBtn = document.createElement("button");
     moreBtn.className = "more-btn";
     moreBtn.title = "Mais opções";
@@ -542,6 +742,7 @@
     folderDropdown.className = "fluent-menu";
 
     wrapper.appendChild(strip);
+    wrapper.appendChild(clipboardLayer);
     wrapper.appendChild(moreBtn);
 
     shadow.appendChild(style);
@@ -556,12 +757,26 @@
       pageStyle,
       wrapper,
       strip,
+      clipboardLayer,
+      capsule,
+      capsuleMain,
+      capsuleCat,
+      capsuleText,
+      capsuleClose,
       moreBtn,
       settingsMenu,
       contextMenu,
       folderDropdown,
       isHoverRevealed: false,
       isMenuOpen: false,
+      isCollectionOverlayOpen: false,
+      isSuggestionRevealed: false,
+      activeSuggestion: null,
+      suggestionTimer: null,
+      suggestionDeadline: 0,
+      suggestionRemainingMs: 0,
+      clipboardController: null,
+      collectionsController: null,
       appliedTheme: memorized ? memorized.theme : null,
       appliedBgBar: memorized ? memorized.bgBar : null,
       cleanupFns: []
@@ -583,19 +798,195 @@
       });
     });
 
+    setupCollections();
     renderBookmarksList();
     renderSettingsMenu();
     renderContextMenu();
     setupInteractions();
+    setupSmartClipboard();
     setupThemeAndColorSync();
     injectSpeculationRules();
+  }
+
+  function setupCollections() {
+    if (!ui || !window.MNT_Collections) return;
+
+    ui.collectionsController = window.MNT_Collections.createController({
+      shadow: ui.shadow,
+      host: ui.host,
+      strip: ui.strip,
+      settingsMenu: ui.settingsMenu,
+      getSettings: () => currentSettings,
+      getBookmarks: () => currentBookmarks,
+      saveSetting,
+      isSafeUrl,
+      getFaviconUrl,
+      closeHostMenus: closeHostMenusOnly,
+      onOverlayStateChange: (isOpen) => {
+        if (!ui) return;
+        ui.isCollectionOverlayOpen = Boolean(isOpen);
+        updateBarVisibilityState();
+      },
+      reRenderBar: renderBookmarksList,
+      reRenderSettingsMenu: renderSettingsMenu,
+      onCollectionContextMenu: (col, e) => {
+        if (!ui) return;
+        closeAllMenus();
+        ui.collectionsController.renderCollectionContextMenu(ui.contextMenu, col, e.clientX);
+        ui.contextMenu.style.top = `${Math.min(e.clientY, window.innerHeight - 210)}px`;
+        ui.contextMenu.style.left = `${Math.min(e.clientX, window.innerWidth - 250)}px`;
+        ui.contextMenu.classList.add("open");
+        ui.isMenuOpen = true;
+        updateBarVisibilityState();
+      }
+    });
+
+    ui.cleanupFns.push(() => {
+      if (ui?.collectionsController) {
+        ui.collectionsController.destroy();
+      }
+    });
+  }
+
+  function showClipboardSuggestion(suggestion) {
+    if (!ui || !suggestion || !currentSettings?.smartClipboard) return;
+    if (ui.collectionsController && ui.collectionsController.isActivelyEditing()) return;
+    if (ui.collectionsController && ui.collectionsController.isViewOpen()) {
+      ui.collectionsController.closeAllCollectionOverlays();
+    }
+
+    clearTimeout(ui.suggestionTimer);
+    ui.activeSuggestion = suggestion;
+    ui.isSuggestionRevealed = true;
+
+    ui.capsuleCat.textContent = suggestion.label;
+    ui.capsuleText.textContent = suggestion.preview;
+    if (suggestion.isOverflowing || (suggestion.preview && suggestion.preview.length > 20)) {
+      ui.capsuleText.classList.add("fade-end");
+    } else {
+      ui.capsuleText.classList.remove("fade-end");
+    }
+
+    const tooltipPreview = String(suggestion.payload || "").replace(/\s+/g, " ").trim().slice(0, 140);
+    ui.capsuleMain.title = `${suggestion.label}: ${tooltipPreview}`;
+
+    ui.wrapper.classList.add("has-suggestion");
+    updateBarVisibilityState();
+
+    const durationMs = 15000;
+    ui.suggestionRemainingMs = durationMs;
+    ui.suggestionDeadline = Date.now() + durationMs;
+    ui.suggestionTimer = setTimeout(() => {
+      hideClipboardSuggestion();
+    }, durationMs);
+  }
+
+  function hideClipboardSuggestion() {
+    if (!ui) return;
+    clearTimeout(ui.suggestionTimer);
+    ui.suggestionTimer = null;
+    ui.suggestionDeadline = 0;
+    ui.suggestionRemainingMs = 0;
+    ui.activeSuggestion = null;
+    ui.isSuggestionRevealed = false;
+    ui.wrapper.classList.remove("has-suggestion");
+    updateBarVisibilityState();
+  }
+
+  function applyClipboardSuggestion() {
+    if (!ui || !ui.activeSuggestion) return;
+    const suggestion = ui.activeSuggestion;
+    hideClipboardSuggestion();
+
+    const api = window.MNT_SmartClipboard;
+    if (!api) return;
+
+    if (suggestion.category === "site" || suggestion.category === "maps") {
+      const targetUrl = api.buildTargetUrl(suggestion, currentSettings);
+      if (!targetUrl || !isSafeUrl(targetUrl)) return;
+
+      const openMode = currentSettings?.clipboardOpenMode === "current_tab" ? "current_tab" : "new_tab";
+      if (openMode === "current_tab") {
+        window.location.href = targetUrl;
+      } else {
+        chrome.runtime.sendMessage({
+          action: "openClipboardUrl",
+          url: targetUrl,
+          openMode: "new_tab"
+        });
+      }
+      return;
+    }
+
+    if (suggestion.category === "colar" || suggestion.category === "palavra" || suggestion.category === "code") {
+      const engine = detectCurrentEngine();
+      api.pasteIntoEngineInput(suggestion.payload, engine);
+    }
+  }
+
+  function setupSmartClipboard() {
+    if (!ui || !window.MNT_SmartClipboard) return;
+
+    ui.capsuleMain.addEventListener("click", (e) => {
+      e.stopPropagation();
+      applyClipboardSuggestion();
+    });
+
+    ui.capsuleClose.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hideClipboardSuggestion();
+    });
+
+    ui.capsule.addEventListener("mouseenter", () => {
+      if (!ui || !ui.activeSuggestion || !ui.suggestionTimer) return;
+      const remaining = Math.max(4000, ui.suggestionDeadline - Date.now());
+      ui.suggestionRemainingMs = remaining;
+      clearTimeout(ui.suggestionTimer);
+      ui.suggestionTimer = null;
+    });
+
+    ui.capsule.addEventListener("mouseleave", () => {
+      if (!ui || !ui.activeSuggestion || ui.suggestionTimer) return;
+      const waitMs = Math.max(4000, ui.suggestionRemainingMs || 6000);
+      ui.suggestionDeadline = Date.now() + waitMs;
+      ui.suggestionTimer = setTimeout(() => {
+        hideClipboardSuggestion();
+      }, waitMs);
+    });
+
+    ui.clipboardController = window.MNT_SmartClipboard.createController({
+      getEngine: detectCurrentEngine,
+      getSettings: () => currentSettings,
+      onSuggestion: showClipboardSuggestion
+    });
+
+    ui.clipboardController.syncWithSettings();
+
+    ui.cleanupFns.push(() => {
+      clearTimeout(ui?.suggestionTimer);
+      if (ui?.clipboardController) {
+        ui.clipboardController.stop();
+      }
+    });
   }
 
   function renderBookmarksList() {
     if (!ui) return;
     ui.strip.innerHTML = "";
 
-    currentBookmarks.forEach((node) => {
+    const orderedBookmarks = window.MNT_Collections
+      ? window.MNT_Collections.sortBarBookmarks(currentBookmarks, currentSettings?.barBookmarksOrder)
+      : currentBookmarks;
+
+    const hasBookmarksAfter = orderedBookmarks.some(
+      (node) => (node && node.url && isSafeUrl(node.url)) || (node && node.children)
+    );
+
+    if (ui.collectionsController) {
+      ui.collectionsController.renderBarCollections(ui.strip, hasBookmarksAfter);
+    }
+
+    orderedBookmarks.forEach((node) => {
       if (node.url) {
         if (!isSafeUrl(node.url)) return;
 
@@ -614,6 +1005,9 @@
           span.textContent = node.title;
           link.appendChild(span);
         }
+        if (ui.collectionsController && node.id) {
+          ui.collectionsController.attachBookmarkBarDrag(link, node.id);
+        }
         ui.strip.appendChild(link);
       } else if (node.children) {
         const folderBtn = document.createElement("button");
@@ -631,6 +1025,9 @@
           openFolderMenu(folderBtn, node.children);
         });
 
+        if (ui.collectionsController && node.id) {
+          ui.collectionsController.attachBookmarkBarDrag(folderBtn, node.id);
+        }
         ui.strip.appendChild(folderBtn);
       }
     });
@@ -814,6 +1211,28 @@
       });
     });
 
+    const smartClipBtn = document.createElement("button");
+    smartClipBtn.className = "menu-row";
+    smartClipBtn.innerHTML = `
+      <div class="menu-row-left">
+        <span class="check-slot">${currentSettings.smartClipboard ? ICONS.check : ""}</span>
+        <span>Clipboard inteligente</span>
+      </div>
+    `;
+    smartClipBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const nextState = !currentSettings.smartClipboard;
+      saveSetting({ smartClipboard: nextState }, () => {
+        if (!nextState) {
+          hideClipboardSuggestion();
+        }
+        if (ui && ui.clipboardController) {
+          ui.clipboardController.syncWithSettings();
+        }
+        renderSettingsMenu();
+      });
+    });
+
     const divider2 = document.createElement("div");
     divider2.className = "menu-divider";
 
@@ -843,6 +1262,99 @@
     ui.settingsMenu.appendChild(visRow);
     ui.settingsMenu.appendChild(divider1);
     ui.settingsMenu.appendChild(accelBtn);
+    ui.settingsMenu.appendChild(smartClipBtn);
+
+    if (currentSettings.smartClipboard) {
+      const mapOptions = [
+        { id: "google", label: "Google Maps" },
+        { id: "bing", label: "Bing Maps" },
+        { id: "apple", label: "Apple Maps" }
+      ];
+
+      const mapRow = document.createElement("div");
+      mapRow.className = "menu-row has-submenu sub-setting-row";
+      mapRow.innerHTML = `
+        <div class="menu-row-left">
+          <span class="check-slot"></span>
+          <span>Mapa padrão</span>
+        </div>
+        ${ICONS.chevronRight}
+      `;
+
+      const mapSubmenu = document.createElement("div");
+      mapSubmenu.className = "submenu";
+      const activeMap = currentSettings.clipboardMapProvider || "google";
+
+      mapOptions.forEach((opt) => {
+        const btn = document.createElement("button");
+        btn.className = "menu-row";
+        const isSelected = activeMap === opt.id;
+        btn.innerHTML = `
+          <div class="menu-row-left">
+            <span class="check-slot">${isSelected ? ICONS.check : ""}</span>
+            <span>${opt.label}</span>
+          </div>
+        `;
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          saveSetting({ clipboardMapProvider: opt.id }, () => {
+            renderSettingsMenu();
+            closeAllMenus();
+          });
+        });
+        mapSubmenu.appendChild(btn);
+      });
+      mapRow.appendChild(mapSubmenu);
+
+      const openModeOptions = [
+        { id: "new_tab", label: "Nova guia" },
+        { id: "current_tab", label: "Na guia atual" }
+      ];
+
+      const openModeRow = document.createElement("div");
+      openModeRow.className = "menu-row has-submenu sub-setting-row";
+      openModeRow.innerHTML = `
+        <div class="menu-row-left">
+          <span class="check-slot"></span>
+          <span>Abrir sugestão</span>
+        </div>
+        ${ICONS.chevronRight}
+      `;
+
+      const openModeSubmenu = document.createElement("div");
+      openModeSubmenu.className = "submenu";
+      const activeOpenMode = currentSettings.clipboardOpenMode || "new_tab";
+
+      openModeOptions.forEach((opt) => {
+        const btn = document.createElement("button");
+        btn.className = "menu-row";
+        const isSelected = activeOpenMode === opt.id;
+        btn.innerHTML = `
+          <div class="menu-row-left">
+            <span class="check-slot">${isSelected ? ICONS.check : ""}</span>
+            <span>${opt.label}</span>
+          </div>
+        `;
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          saveSetting({ clipboardOpenMode: opt.id }, () => {
+            renderSettingsMenu();
+            closeAllMenus();
+          });
+        });
+        openModeSubmenu.appendChild(btn);
+      });
+      openModeRow.appendChild(openModeSubmenu);
+
+      ui.settingsMenu.appendChild(mapRow);
+      ui.settingsMenu.appendChild(openModeRow);
+    }
+
+    if (ui.collectionsController) {
+      const collectionsRow = ui.collectionsController.createSettingsSubmenuRow(ICONS.chevronRight);
+      ui.settingsMenu.appendChild(collectionsRow);
+    }
+
     ui.settingsMenu.appendChild(divider2);
     ui.settingsMenu.appendChild(favManagerBtn);
     ui.settingsMenu.appendChild(aboutBtn);
@@ -897,7 +1409,7 @@
     ui.settingsMenu.appendChild(githubLink);
   }
 
-  function renderContextMenu() {
+  function renderContextMenu(anchorX = 12) {
     if (!ui) return;
     ui.contextMenu.innerHTML = "";
 
@@ -919,6 +1431,12 @@
     divider.className = "menu-divider";
 
     ui.contextMenu.appendChild(editFavBtn);
+
+    if (ui.collectionsController) {
+      const colRows = ui.collectionsController.createBarContextMenuItems(anchorX);
+      colRows.forEach((r) => ui.contextMenu.appendChild(r));
+    }
+
     ui.contextMenu.appendChild(divider);
 
     const quickModes = [
@@ -957,7 +1475,7 @@
     });
   }
 
-  function closeAllMenus() {
+  function closeHostMenusOnly() {
     if (!ui) return;
     ui.settingsMenu.classList.remove("open");
     ui.contextMenu.classList.remove("open");
@@ -965,6 +1483,14 @@
     ui.moreBtn.classList.remove("active");
     ui.strip.querySelectorAll(".item.active").forEach((el) => el.classList.remove("active"));
     ui.isMenuOpen = false;
+  }
+
+  function closeAllMenus() {
+    if (!ui) return;
+    closeHostMenusOnly();
+    if (ui.collectionsController) {
+      ui.collectionsController.closeAllCollectionOverlays();
+    }
     updateBarVisibilityState();
   }
 
@@ -1108,7 +1634,7 @@
     } else {
       ui.pageStyle.textContent = "";
       clearFixedTopAttributes();
-      if (ui.isHoverRevealed || ui.isMenuOpen) {
+      if (ui.isHoverRevealed || ui.isMenuOpen || ui.isCollectionOverlayOpen || ui.isSuggestionRevealed) {
         ui.wrapper.classList.remove("hidden");
         ui.wrapper.classList.add("floating-open");
       } else {
@@ -1143,8 +1669,8 @@
       e.preventDefault();
       e.stopPropagation();
       closeAllMenus();
-      renderContextMenu();
-      ui.contextMenu.style.top = `${Math.min(e.clientY, window.innerHeight - 180)}px`;
+      renderContextMenu(e.clientX);
+      ui.contextMenu.style.top = `${Math.min(e.clientY, window.innerHeight - 245)}px`;
       ui.contextMenu.style.left = `${Math.min(e.clientX, window.innerWidth - 250)}px`;
       ui.contextMenu.classList.add("open");
       ui.isMenuOpen = true;
@@ -1163,7 +1689,7 @@
             updateBarVisibilityState();
           }, 40);
         }
-      } else if (ui.isHoverRevealed && e.clientY > 46 && !ui.isMenuOpen) {
+      } else if (ui.isHoverRevealed && e.clientY > 46 && !ui.isMenuOpen && !ui.isCollectionOverlayOpen) {
         clearTimeout(hoverTimer);
         ui.isHoverRevealed = false;
         updateBarVisibilityState();
@@ -1179,14 +1705,15 @@
     });
 
     ui.wrapper.addEventListener("mouseleave", (e) => {
-      if (!ui.isMenuOpen && e.clientY > 34) {
+      if (!ui.isMenuOpen && !ui.isCollectionOverlayOpen && e.clientY > 34) {
         ui.isHoverRevealed = false;
         updateBarVisibilityState();
       }
     });
 
     const onDocumentClick = () => {
-      if (ui && ui.isMenuOpen) closeAllMenus();
+      if (ui?.collectionsController?.shouldIgnoreOutsideClick?.()) return;
+      if (ui && (ui.isMenuOpen || ui.isCollectionOverlayOpen)) closeAllMenus();
       if (ui && shouldBarBeDocked()) {
         clearTimeout(clickAdjustTimer);
         clickAdjustTimer = setTimeout(adjustFixedTopElements, 60);

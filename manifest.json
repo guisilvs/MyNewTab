@@ -14,7 +14,9 @@
     "favicon",
     "storage",
     "tabs",
-    "alarms"
+    "alarms",
+    "clipboardRead",
+    "offscreen"
   ],
   "host_permissions": [
     "https://www.google.com/*",
@@ -46,7 +48,7 @@
         "https://chatgpt.com/*",
         "https://www.perplexity.ai/*"
       ],
-      "js": ["content.js"],
+      "js": ["smart-clipboard.js", "collections.js", "content.js"],
       "run_at": "document_start"
     }
   ],
