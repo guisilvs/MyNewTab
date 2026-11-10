@@ -6,7 +6,7 @@
   // Janela máxima de caracteres inspecionados para classificação (nunca analisa textos gigantes por inteiro)
   const ANALYSIS_HEAD_LIMIT = 1500;
   // Quantidade máxima de linhas iniciais avaliadas para detectar código-fonte
-  const CODE_SAMPLE_MAX_LINES = 10;
+  const CODE_SAMPLE_MAX_LINES = 18;
   // Limite de palavras do Google (conforme documentação técnica da busca)
   const GOOGLE_MAX_WORDS = 32;
 
@@ -274,36 +274,199 @@
     return null;
   }
 
-  // Analisa APENAS as primeiras linhas do texto para identificar código-fonte com custo mínimo de CPU/memória
-  function detectCodeInHead(nonEmptyLines) {
-    const sampleLines = nonEmptyLines.slice(0, CODE_SAMPLE_MAX_LINES);
-    const sample = sampleLines.join("\n").slice(0, 700);
+  // Verifica se uma categoria de sugestão está habilitada nas preferências do usuário
+  function isCategoryEnabled(category, settings) {
+    if (!settings || settings.clipboardAllCategories !== false) {
+      return true;
+    }
+    const cats = settings.clipboardCategories;
+    if (!cats || typeof cats !== "object") {
+      return true;
+    }
+    return cats[category] !== false;
+  }
+
+  function getLineIndentWidth(line) {
+    let count = 0;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === " ") count += 1;
+      else if (ch === "\t") count += 4;
+      else break;
+    }
+    return count;
+  }
+
+  // Analisa APENAS as primeiras linhas do texto para identificar código-fonte com alta assertividade e custo O(1)
+  function detectCodeInHead(rawNonEmptyLines) {
+    if (!Array.isArray(rawNonEmptyLines) || rawNonEmptyLines.length === 0) return false;
+    const sampleRawLines = rawNonEmptyLines.slice(0, CODE_SAMPLE_MAX_LINES);
+    const sample = sampleRawLines.join("\n").slice(0, 1200);
     if (!sample) return false;
+
+    const trimmedLines = sampleRawLines.map((l) => l.trim());
+    const firstTrimmed = trimmedLines[0] || "";
+
+    // URL única pura nunca deve ser classificada como código (mesmo que contenha ?a=1&b=2)
+    if (trimmedLines.length === 1 && /^(?:https?:\/\/|www\.)\S+$/i.test(firstTrimmed)) {
+      return false;
+    }
 
     let score = 0;
 
-    // Chamadas diretas clássicas em 1 linha: printf(hello world), console.log(...), alert(...), def fn():
-    if (/^\s*[a-zA-Z_$][\w$]*(?:\.[a-zA-Z_$][\w$]*)*\s*\([^)]*\)\s*;?\s*$/.test(sampleLines[0])) {
+    // 1. HTML / XML / SVG / JSX / Web Components
+    if (
+      /^\s*<!DOCTYPE\s+html\b/i.test(sample) ||
+      /<([a-zA-Z][\w:-]*)\b[^>]*>[\s\S]*<\/\1\s*>/.test(sample) ||
+      /<([a-zA-Z][\w:-]*)\b(?!:)[^>\n]*\/>/.test(sample) ||
+      /(?:^|\n)\s*<(?:html|head|body|div|span|p|a|h[1-6]|script|style|link|meta|section|article|aside|main|header|footer|nav|form|label|input|textarea|select|option|button|svg|path|g|circle|rect|ul|ol|li|dl|dt|dd|table|thead|tbody|tr|th|td|img|video|audio|canvas|iframe|template|slot|figure|figcaption|details|summary|dialog|code|pre)\b(?:\s+[^>\n]*)?>/i.test(sample) ||
+      /(?:^|\n)\s*<[A-Z][A-Za-z0-9]+\b(?:\s+[a-zA-Z_:][\w:.-]*(?:=(?:"[^"]*"|'[^']*'|\{[^}]*\}))?)*\s*\/?>/.test(sample)
+    ) {
       score += 3;
     }
 
-    // Palavras-chave de declaração de código
-    if (/\b(function|const|let|var|class|interface|type|enum|def|elif|async|await|import|export|return|public|private|protected|static|void|int|float|double|boolean|struct|namespace|using|package|impl|fn|pub|mut|println!|printf|sizeof|#include|#define)\b/.test(sample)) {
+    // 2. SQL (DML, DDL, CTEs e fragmentos multi-cláusula, ignorando comentários iniciais -- ou /* */)
+    const sqlClean = sample.replace(/^\s*(?:--[^\n]*\n\s*|\/\*[\s\S]*?\*\/\s*)+/, "");
+    if (
+      /^(?:WITH\s+[a-zA-Z_]\w*\s+AS\s*\(|SELECT\s+[\s\S]+?\bFROM\b|SELECT\s+(?:DISTINCT\s+|TOP\s+\d+\s+)?[\w*(),\s.'"+-]+\s*;|INSERT\s+(?:IGNORE\s+|OR\s+REPLACE\s+)?INTO\s+\S+|UPDATE\s+\S+\s+SET\s+|DELETE\s+FROM\s+\S+|MERGE\s+INTO\s+\S+|CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+|UNIQUE\s+)?(?:TABLE|VIEW|INDEX|DATABASE|SCHEMA|FUNCTION|PROCEDURE|TRIGGER|SEQUENCE|TYPE)\b|ALTER\s+(?:TABLE|VIEW|DATABASE|SCHEMA|INDEX)\b|DROP\s+(?:TABLE|VIEW|INDEX|DATABASE|SCHEMA|FUNCTION|PROCEDURE|TRIGGER)\b|TRUNCATE\s+TABLE\b)/i.test(sqlClean)
+    ) {
+      score += 3;
+    } else {
+      let sqlClauses = 0;
+      if (/\b(?:INNER|LEFT|RIGHT|FULL|CROSS)?\s*JOIN\s+[a-zA-Z_`"\[]\S*\s+ON\b/i.test(sqlClean)) sqlClauses++;
+      if (/\bWHERE\s+\S+\s*(?:=|<|>|!=|<>|\bIN\b|\bLIKE\b|\bILIKE\b|\bIS\b|\bBETWEEN\b)/i.test(sqlClean)) sqlClauses++;
+      if (/\bGROUP\s+BY\s+[a-zA-Z_0-9`"(\[]/i.test(sqlClean)) sqlClauses++;
+      if (/\bORDER\s+BY\s+[a-zA-Z_0-9`"(\[]/i.test(sqlClean)) sqlClauses++;
+      if (/\bHAVING\s+\S+/i.test(sqlClean)) sqlClauses++;
+      if (/\bVALUES\s*\(/i.test(sqlClean)) sqlClauses++;
+      if (sqlClauses >= 2) score += 3;
+    }
+
+    // 3. CSS / SCSS / Regras de estilo e declarações copiadas do DevTools
+    if (
+      /(?:^|\n)\s*(?:@(?:media|keyframes|supports|layer|container|font-face|import)\b|[.#*:&\[]?[a-zA-Z0-9_-][^{\n]{0,120}\s*\{\s*(?:\/\*[\s\S]*?\*\/\s*)?(?:--[a-zA-Z0-9_-]+|[a-z]{2,}(?:-[a-z]+)*)\s*:\s*[^;{}\n]+)/m.test(sample)
+    ) {
+      score += 3;
+    } else {
+      const cssPropRegex = /^\s*(?:--[a-zA-Z0-9_-]+|(?:display|position|top|right|bottom|left|width|height|min-width|max-width|min-height|max-height|margin(?:-(?:top|right|bottom|left))?|padding(?:-(?:top|right|bottom|left))?|border(?:-[a-z]+)*|background(?:-[a-z]+)*|color|font(?:-[a-z]+)*|line-height|letter-spacing|text-(?:align|decoration|transform|overflow)|flex(?:-[a-z]+)*|grid(?:-[a-z]+)*|align-items|justify-content|gap|opacity|z-index|overflow(?:-[xy])?|box-shadow|transform|transition|animation|cursor|pointer-events|user-select|backdrop-filter))\s*:\s*[^;\n]+;?\s*$/i;
+      const cssPropLines = trimmedLines.filter((l) => cssPropRegex.test(l));
+      if (
+        cssPropLines.length >= 2 ||
+        (cssPropLines.length === 1 &&
+          /;\s*$/.test(cssPropLines[0]) &&
+          /(?:\b\d+(?:px|rem|em|vh|vw|%|s|ms)\b|#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|var\(--|calc\(|linear-gradient\()/i.test(cssPropLines[0]))
+      ) {
+        score += 3;
+      }
+    }
+
+    // 4. Python (def, class, imports, compreensões, decorators e blocos com ':' + indentação)
+    if (
+      /^\s*(?:async\s+)?def\s+[a-zA-Z_]\w*\s*\([^)]*\)\s*(?:->\s*[^:\n]+)?\s*:/m.test(sample) ||
+      /^\s*class\s+[A-Z_]\w*(?:\([^)]*\))?\s*:/m.test(sample) ||
+      /^\s*from\s+[a-zA-Z_.][\w.]*\s+import\s+[a-zA-Z_*(\w]/m.test(sample) ||
+      /^\s*import\s+[a-zA-Z_][\w.]*(?:\s+as\s+[a-zA-Z_]\w*)?\s*$/m.test(sample) ||
+      /\[[^\n\]]+\bfor\s+[a-zA-Z_]\w*\s+in\s+[^\n\]]+\]/.test(sample) ||
+      /\bif\s+__name__\s*==\s*['"]__main__['"]/.test(sample)
+    ) {
+      score += 3;
+    } else {
+      for (let i = 0; i < sampleRawLines.length - 1; i++) {
+        const curTrim = trimmedLines[i];
+        if (/^(?:if|elif|else|for|while|with|try|except|finally|match|case)\b[^;\n]*:\s*(?:#.*)?$/.test(curTrim)) {
+          if (getLineIndentWidth(sampleRawLines[i + 1]) > getLineIndentWidth(sampleRawLines[i])) {
+            score += 3;
+            break;
+          }
+        }
+      }
+    }
+
+    // 5. Go (func, package, :=, struct/interface, err != nil)
+    if (
+      /^\s*func\s+(?:\([^)]+\)\s*)?[a-zA-Z_]\w*\s*\(/m.test(sample) ||
+      /^\s*package\s+[a-z_]\w*\s*$/m.test(sample) ||
+      /\b[a-zA-Z_]\w*(?:\s*,\s*[a-zA-Z_]\w*)*\s*:=\s*[^=\s]/.test(sample) ||
+      /\bif\s+err\s*!=\s*nil\b/.test(sample) ||
+      /\btype\s+[A-Z]\w*\s+(?:struct|interface)\s*\{/.test(sample)
+    ) {
+      score += 3;
+    }
+
+    // 6. Java / C# / Kotlin / C / C++ / Rust (modificadores, generics, anotações, macros e pré-processador)
+    if (
+      /^\s*(?:public|private|protected|internal)\s+(?:static\s+|final\s+|abstract\s+|readonly\s+|override\s+|virtual\s+|async\s+|synchronized\s+)*(?:class\s+|interface\s+|enum\s+|record\s+|struct\s+|void\s+|[a-zA-Z_][\w.<>\[\],?\s]*\s+[a-zA-Z_]\w*\s*[=(;{])/m.test(sample) ||
+      /^\s*(?:@(?:Override|Autowired|Bean|Component|Service|Repository|Controller|RestController|RequestMapping|GetMapping|PostMapping|PutMapping|DeleteMapping|Entity|Table|Id|Column|Test|BeforeEach|AfterEach|Nullable|NonNull|SuppressWarnings|Data|Builder|Getter|Setter)\b|#\[(?:derive|allow|cfg|test)\b|\[(?:Serializable|HttpGet|HttpPost|Route|ApiController)\])/m.test(sample) ||
+      /\b[A-Z]\w*<\s*[A-Z?][\w<>,\s?]*>\s+[a-zA-Z_]\w*\s*[=;(]/.test(sample) ||
+      /\bnew\s+[A-Z]\w*(?:<[^>]*>)?\s*\(/.test(sample) ||
+      /^\s*#(?:include\s*[<"][^>"]+[>"]|define\s+[A-Za-z_]\w*|ifdef\s+\w+|ifndef\s+\w+|pragma\s+\w+)/m.test(sample) ||
+      /\b(?:fn\s+[a-z_]\w*\s*[<(]|let\s+mut\s+[a-z_]\w*|impl(?:\s*<[^>]+>)?\s+[A-Z]\w*|println!\s*\(|std::\w+)/.test(sample)
+    ) {
+      score += 3;
+    }
+
+    // 7. JavaScript / TypeScript / PHP / JSON / CLI / Shell
+    if (
+      /^\s*(?:export\s+)?(?:const|let|var)\s+(?:[a-zA-Z_$][\w$]*|\{[^}]+\}|\[[^\]]+\])\s*(?::\s*[^=\n]+)?=/m.test(sample) ||
+      /^\s*(?:import\s+(?:type\s+)?[\w*{}\s,]+\s+from\s+['"][^'"]+['"]|import\s+['"][^'"]+['"]|export\s+(?:default\s+|const\s+|let\s+|var\s+|function\s+|async\s+function\s+|class\s+|interface\s+|type\s+|enum\s+|\{)|(?:module\.)?exports(?:\.[a-zA-Z_$][\w$]*)?\s*=)/m.test(sample) ||
+      /(?:\([^()\n]{0,80}\)|[a-zA-Z_$][\w$]*)\s*=>\s*(?:\{|[\w$(['"`])/.test(sample) ||
+      /^\s*(?:export\s+)?(?:interface|type)\s+[A-Z]\w*(?:<[^>]+>)?\s*(?:=|\{)/m.test(sample) ||
+      /<\?php\b|\$[a-zA-Z_]\w*\s*(?:=\s*[^;\n]+;|->[a-zA-Z_]\w*)/.test(sample) ||
+      /^\s*[\[{]\s*"[^"]+"\s*:/.test(sample) ||
+      /^\s*(?:\$\s+)?(?:git\s+(?:clone|commit|push|pull|checkout|status|branch|merge|rebase|init|add|diff|log|stash)|npm\s+(?:install|i|run|start|build|test|ci)|yarn\s+(?:add|run|build|install)|pnpm\s+|pip3?\s+install|python3?\s+-(?:m|c)\s+|docker\s+(?:run|build|compose|ps|exec|pull)|kubectl\s+|cargo\s+(?:build|run|test|add)|go\s+(?:run|build|mod|get|test)|dotnet\s+(?:run|build|add|new)|curl\s+-[a-zA-Z]|sudo\s+apt)\b/m.test(sample)
+    ) {
+      score += 3;
+    }
+
+    if (score >= 3) return true;
+
+    // 8. Heurística generalista multi-linguagem (chamadas de função, atribuições, operadores, APIs e indentação)
+    // Chamadas diretas sem espaço antes do '(' (ex: printf(hello world), calcularTotal(a, b), obj.metodo(x))
+    if (
+      /^\s*[a-zA-Z_$][\w$]*(?:(?:\.|::|->)[a-zA-Z_$][\w$]*)+\s*\([^;\n]*\)\s*;?\s*$/m.test(sample) ||
+      /^\s*[a-zA-Z_$][\w$]*\([^)\n]*\)\s*;?\s*$/m.test(sample)
+    ) {
+      score += 3;
+    }
+
+    // APIs e objetos de biblioteca padrão em diversas linguagens
+    if (
+      /\b(?:console\.(?:log|warn|error|info|table)|document\.(?:getElementById|querySelector|querySelectorAll|createElement|addEventListener)|window\.|System\.out\.print|fmt\.Print|log\.(?:Print|Fatal|Info|Error)|__init__|self\.|this\.[a-zA-Z_$]|super\.|require\(|fetch\(|useState\(|useEffect\(|JSON\.(?:parse|stringify)|Math\.[a-zA-Z]+|Object\.(?:keys|values|entries|assign)|Array\.isArray)\b/.test(sample)
+    ) {
+      score += 3;
+    }
+
+    // Atribuições de variáveis (ex: total = preco * 1.1, x += 1, resultado_final = fn(a))
+    const assignmentLines = trimmedLines.filter((l) =>
+      /^[a-zA-Z_$@][\w$.[\]]*\s*(?:=|\+=|-=|\*=|\/=|%=|:=|<-|\?\?=|\|\|=|&&=)\s*[^=>\s]/.test(l)
+    );
+    if (assignmentLines.length >= 2) {
+      score += 3;
+    } else if (assignmentLines.length === 1) {
       score += 2;
+      if (/['"`\d\[\]{}()+\-*/]|true|false|null|None|nil|[a-z]+_[a-z]+|[a-z]+[A-Z]/.test(assignmentLines[0])) {
+        score += 1;
+      }
     }
 
-    // APIs e objetos de programação comuns
-    if (/\b(console\.(log|warn|error|info)|document\.(getElementById|querySelector|createElement|addEventListener)|window\.|System\.out\.print|std::|__init__|self\.|module\.exports|require\(|fetch\(|JSON\.(parse|stringify))\b/.test(sample)) {
-      score += 3;
+    // Contagem de palavras-chave de programação distintas
+    const kwMatches = sample.match(
+      /\b(?:function|func|fn|def|lambda|const|let|var|val|mut|class|struct|interface|enum|trait|impl|record|namespace|package|module|import|export|require|include|using|return|yield|async|await|defer|public|private|protected|static|final|void|boolean|bool|int|int32|int64|uint|float|float64|double|String|println|printf|elif|elsif|elseif|try|catch|except|finally|throw|typeof|instanceof|sizeof|nullptr|undefined|None|nil)\b/g
+    );
+    if (kwMatches) {
+      const uniqueKws = new Set(kwMatches).size;
+      if (uniqueKws >= 3) score += 3;
+      else if (uniqueKws === 2) score += 2;
+      else score += 1;
     }
 
     // Operadores típicos de linguagens de programação
-    if (/(=>|===|!==|&&|\|\||::|->|\+=|-=|\*=|<<|>>)/.test(sample)) {
+    if (/(=>|===|!==|==|!=|<=|>=|&&|\|\||\?\?|\?\.|::|->|\+=|-=|\*=|<<|>>|\|>)/.test(sample)) {
       score += 2;
     }
 
-    // Delimitadores estruturais ({, }, ; no fim da linha, colchetes indexados)
-    const linesEndingWithSemiOrBrace = sampleLines.filter((l) => /[;{}]\s*$/.test(l.trim())).length;
+    // Delimitadores estruturais (; { } no fim da linha)
+    const linesEndingWithSemiOrBrace = trimmedLines.filter((l) => /[;{}]\s*$/.test(l)).length;
     if (linesEndingWithSemiOrBrace >= 1) score += 1;
     if (linesEndingWithSemiOrBrace >= 2) score += 2;
 
@@ -311,42 +474,24 @@
       score += 1;
     }
 
-    // Tags HTML / JSX / XML
-    if (/^\s*<(!DOCTYPE|html|head|body|div|span|p|a|script|style|section|main|header|footer|nav|form|input|button|svg|path|ul|li|table|tr|td|img|[A-Z][A-Za-z0-9]*)\b[^>]*>/i.test(sample)) {
-      score += 3;
-    }
-
-    // Consultas SQL
-    if (/^\s*(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|CREATE\s+(?:TABLE|DATABASE|INDEX|VIEW)|ALTER\s+TABLE|DROP\s+TABLE)\b[\s\S]*\b(FROM|WHERE|VALUES|SET|JOIN|GROUP\s+BY|ORDER\s+BY|\()\b/i.test(sample)) {
-      score += 3;
-    }
-
-    // Objeto JSON estruturado
-    if (/^\s*[\[{]\s*"[^"]+"\s*:/.test(sample)) {
-      score += 3;
-    }
-
-    // Regra CSS
-    if (/^[.#@]?[a-zA-Z0-9_-]+(?:\s+[.#a-zA-Z0-9_:-\[\]]+)*\s*\{\s*[a-z-]+\s*:\s*[^;]+;/m.test(sample)) {
-      score += 3;
-    }
-
-    // Comandos de terminal / CLI / Git / Docker / NPM / Pip
-    if (/^\s*(?:\$\s+)?(?:git\s+(?:clone|commit|push|pull|checkout|status|branch|merge|rebase|init|add)|npm\s+(?:install|i|run|start|build|test)|yarn\s+(?:add|run|build)|pnpm\s+|pip3?\s+install|docker\s+(?:run|build|compose|ps|exec)|kubectl\s+|curl\s+-[a-zA-Z]|sudo\s+apt)\b/.test(sample)) {
-      score += 3;
-    }
-
     // Comentários de código no início (//, /*, #!/bin/...)
     if (/^\s*(\/\/[^\n]+|\/\*[\s\S]*|#!(?:\/usr)?\/bin\/)/.test(sample)) {
       score += 2;
     }
 
-    // Indentação característica de blocos de código em múltiplas linhas
-    if (sampleLines.length >= 3) {
-      const indentedCount = sampleLines.filter((l) => /^(?:  +|\t+)/.test(l)).length;
+    // Indentação real preservada em múltiplas linhas combinada com pontuação de código
+    if (sampleRawLines.length >= 2) {
+      const indentedCount = sampleRawLines.filter((l) => getLineIndentWidth(l) >= 2).length;
       if (indentedCount >= 2 && /[{}();=<>:\[\]]/.test(sample)) {
         score += 2;
+      } else if (indentedCount >= 1 && /[{}();=\[\]]/.test(sample)) {
+        score += 1;
       }
+    }
+
+    // Identificadores camelCase ou snake_case combinados com sintaxe estrutural
+    if (/(?:\b[a-z]+_[a-z0-9_]+\b|\b[a-z]+[A-Z][a-zA-Z0-9]*\b)/.test(sample) && /[{}();=\[\]]/.test(sample)) {
+      score += 1;
     }
 
     return score >= 3;
@@ -456,7 +601,8 @@
   }
 
   // Função principal de classificação inteligente, rápida e segura
-  function analyzeClipboardText(rawText, engineId) {
+  // Retorna um array de 1 ou 2 sugestões [{ category, label, preview, payload, isOverflowing }] ou null
+  function analyzeClipboardText(rawText, engineId, settings) {
     if (typeof rawText !== "string" || !engineId) return null;
     const totalLength = rawText.length;
     if (totalLength === 0 || totalLength > MAX_CLIPBOARD_LENGTH) return null;
@@ -466,33 +612,43 @@
     const trimmedHead = head.trim();
     if (trimmedHead.length < 2) return null;
 
-    const allHeadLines = trimmedHead.split(/\r?\n/);
-    const nonEmptyLines = allHeadLines.map((l) => l.trim()).filter(Boolean);
+    // Preserva a indentação original em rawNonEmptyLines para análise estrutural precisa de código
+    const rawAllHeadLines = head.replace(/^\r?\n+/, "").split(/\r?\n/);
+    const rawNonEmptyLines = rawAllHeadLines
+      .map((l) => l.replace(/\s+$/, ""))
+      .filter((l) => l.trim().length > 0);
+    const nonEmptyLines = rawNonEmptyLines.map((l) => l.trim());
     if (nonEmptyLines.length === 0) return null;
 
     const isAiEngine = AI_ENGINES.has(engineId);
     const isSearchEngine = SEARCH_ENGINES.has(engineId);
     if (!isAiEngine && !isSearchEngine) return null;
 
+    const looksLikeCode = detectCodeInHead(rawNonEmptyLines);
+
     // 1. Verifica URL primeiro (se for um texto curto/médio sem aparência de bloco de código)
-    if (totalLength <= 600 && nonEmptyLines.length <= 4 && !detectCodeInHead(nonEmptyLines)) {
+    if (totalLength <= 600 && nonEmptyLines.length <= 4 && !looksLikeCode) {
       const urlSuggestion = detectUrlSuggestion(trimmedHead);
-      if (urlSuggestion) return urlSuggestion;
+      if (urlSuggestion) {
+        return isCategoryEnabled("site", settings) ? [urlSuggestion] : null;
+      }
     }
 
     // 2. Verifica Código-Fonte olhando APENAS as primeiras linhas
-    if (detectCodeInHead(nonEmptyLines)) {
-      // Código só é oferecido se o mecanismo selecionado for uma IA
-      if (!isAiEngine) return null;
+    if (looksLikeCode) {
+      // Código só é oferecido se o mecanismo selecionado for uma IA e a categoria estiver ativa
+      if (!isAiEngine || !isCategoryEnabled("code", settings)) return null;
       const codePreviewSource = nonEmptyLines.slice(0, 3).join(" ");
       const { preview, isOverflowing } = formatSingleLinePreview(codePreviewSource, 32);
-      return {
-        category: "code",
-        label: "Code",
-        preview,
-        payload: rawText.trim(),
-        isOverflowing
-      };
+      return [
+        {
+          category: "code",
+          label: "Code",
+          preview,
+          payload: rawText.trim(),
+          isOverflowing
+        }
+      ];
     }
 
     // 3. Descarte imediato nas primeiras linhas se for um artigo ou texto muito extenso
@@ -504,7 +660,9 @@
     // 4. Verifica Endereço físico (puro ou dentro de mensagem curta)
     if (totalLength <= 300 && nonEmptyLines.length <= 3) {
       const addressSuggestion = detectAddressSuggestion(trimmedHead);
-      if (addressSuggestion) return addressSuggestion;
+      if (addressSuggestion) {
+        return isCategoryEnabled("maps", settings) ? [addressSuggestion] : null;
+      }
     }
 
     // Contagem de palavras
@@ -512,30 +670,51 @@
     const wordCount = words.length;
     if (wordCount === 0) return null;
 
-    // 5. Verifica Palavra Única ("palavra")
+    // 5. Verifica Palavra Única -> Cápsulas duplas: Dicionário + Colar (conforme categorias ativas)
     if (wordCount === 1 && nonEmptyLines.length === 1) {
-      const word = words[0];
-      // Deve ter entre 2 e 45 caracteres, conter letras e não possuir separadores de domínio/caminho
+      const rawToken = words[0];
+      // Rejeita tokens com sintaxe de código, caminhos ou URLs antes de limpar pontuação externa
+      if (/[./:\\@()[\]{}<>;=_]/.test(rawToken)) {
+        return null;
+      }
+      const word = rawToken.replace(/^["'“”‘’«]+|["'“”‘’.,;:!?»]+$/g, "");
       if (
         word.length >= 2 &&
         word.length <= 45 &&
         /[a-zA-ZÀ-ÿ]/.test(word) &&
-        !/[./:\\@]/.test(word) &&
-        !/^[\d.,:;!?@#$%^&*()_+=<>/-]+$/.test(word)
+        !/\d/.test(word) &&
+        !/^[-]+$/.test(word)
       ) {
-        const { preview, isOverflowing } = formatSingleLinePreview(word, 30);
-        return {
-          category: "palavra",
-          label: "Palavra",
-          preview,
-          payload: word,
-          isOverflowing
-        };
+        const { preview, isOverflowing } = formatSingleLinePreview(word, 24);
+        const dualSuggestions = [];
+        if (isCategoryEnabled("dict", settings)) {
+          dualSuggestions.push({
+            category: "dict",
+            label: "Dicionário",
+            preview,
+            payload: word,
+            isOverflowing
+          });
+        }
+        if (isCategoryEnabled("colar", settings)) {
+          dualSuggestions.push({
+            category: "colar",
+            label: "Colar",
+            preview,
+            payload: word,
+            isOverflowing
+          });
+        }
+        return dualSuggestions.length > 0 ? dualSuggestions : null;
       }
       return null;
     }
 
     // 6. Verifica Pergunta / Pesquisa / Prompt ("colar")
+    if (!isCategoryEnabled("colar", settings)) {
+      return null;
+    }
+
     if (isSearchEngine) {
       // Buscadores convencionais: pesquisas curtas/médias (2 a 32 palavras, 1 parágrafo, sem prompts de IA)
       if (
@@ -545,13 +724,15 @@
         !isAiSpecificPrompt(trimmedHead, wordCount, paragraphs.length)
       ) {
         const { preview, isOverflowing } = formatSingleLinePreview(trimmedHead, 34);
-        return {
-          category: "colar",
-          label: "Colar",
-          preview,
-          payload: trimmedHead,
-          isOverflowing
-        };
+        return [
+          {
+            category: "colar",
+            label: "Colar",
+            preview,
+            payload: trimmedHead,
+            isOverflowing
+          }
+        ];
       }
       return null;
     }
@@ -568,13 +749,15 @@
         totalLength <= 1100
       ) {
         const { preview, isOverflowing } = formatSingleLinePreview(trimmedHead, 34);
-        return {
-          category: "colar",
-          label: "Colar",
-          preview,
-          payload: rawText.trim(),
-          isOverflowing
-        };
+        return [
+          {
+            category: "colar",
+            label: "Colar",
+            preview,
+            payload: rawText.trim(),
+            isOverflowing
+          }
+        ];
       }
     }
 
@@ -585,7 +768,18 @@
     return paragraphs.length === 1 && nonEmptyLines.length <= 2 && totalLength <= 220;
   }
 
-  // Constrói a URL final para sugestões de 'site' ou 'maps' respeitando o provedor de mapas configurado
+  function toDictionarySlug(word) {
+    return String(word || "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9-]/g, "")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
+  }
+
+  // Constrói a URL final para sugestões de 'site', 'maps' ou 'dict' respeitando os provedores configurados
   function buildTargetUrl(suggestion, settings) {
     if (!suggestion) return null;
 
@@ -607,6 +801,26 @@
         return `https://maps.apple.com/?q=${query}`;
       }
       return `https://www.google.com/maps/search/?api=1&query=${query}`;
+    }
+
+    if (suggestion.category === "dict") {
+      const rawWord = String(suggestion.payload || "").trim();
+      if (!rawWord) return null;
+      const encoded = encodeURIComponent(rawWord);
+      const slug = toDictionarySlug(rawWord);
+      const provider = settings?.clipboardDictProvider || "dicio";
+
+      if (provider === "sinonimos") {
+        return slug
+          ? `https://www.sinonimos.com.br/${slug}/`
+          : `https://www.sinonimos.com.br/busca.php?q=${encoded}`;
+      }
+      if (provider === "linguee") {
+        return `https://www.linguee.com.br/portugues-ingles/search?source=auto&query=${encoded}`;
+      }
+      return slug
+        ? `https://www.dicio.com.br/${slug}/`
+        : `https://www.dicio.com.br/pesquisa.php?q=${encoded}`;
     }
 
     return null;
@@ -828,10 +1042,12 @@
 
         const runAnalysis = () => {
           if (!isRunning) return;
+          const currentCfg = getSettings();
+          if (!currentCfg || !currentCfg.smartClipboard) return;
           const engineId = getEngine();
-          const suggestion = analyzeClipboardText(response.text, engineId);
-          if (suggestion && typeof onSuggestion === "function") {
-            onSuggestion(suggestion);
+          const suggestions = analyzeClipboardText(response.text, engineId, currentCfg);
+          if (suggestions && suggestions.length > 0 && typeof onSuggestion === "function") {
+            onSuggestion(suggestions);
           }
         };
 

@@ -172,6 +172,13 @@
         if (ui.clipboardController) {
           ui.clipboardController.syncWithSettings();
         }
+        if (ui.settingsMenu.classList.contains("clipboard-screen")) {
+          if (currentSettings.smartClipboard) {
+            renderClipboardSettingsScreen();
+          } else {
+            renderSettingsMenu();
+          }
+        }
         if (ui.collectionsController) {
           ui.collectionsController.onExternalDataUpdated({ settingsChanged: true });
         }
@@ -338,6 +345,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
+        gap: 8px;
         pointer-events: none;
         opacity: 0;
         transform: translateY(-2px) scale(0.97);
@@ -362,7 +370,11 @@
         gap: 4px;
         box-sizing: border-box;
         pointer-events: none;
-        transition: box-shadow 0.18s ease, transform 0.15s ease;
+        transition: box-shadow 0.18s ease, transform 0.15s ease, opacity 0.15s ease;
+      }
+
+      .smart-clipboard-layer.dual-capsules .smart-capsule {
+        max-width: min(300px, calc((100vw - 108px) / 2));
       }
 
       .bar-wrapper.has-suggestion .smart-capsule {
@@ -371,6 +383,33 @@
 
       .smart-capsule:hover {
         box-shadow: var(--capsule-glow-hover);
+      }
+
+      @keyframes capsuleChooseBlink {
+        0%, 100% {
+          opacity: 1;
+          transform: scale(1);
+          box-shadow: var(--capsule-glow);
+        }
+        22% {
+          opacity: 0.42;
+          transform: scale(1.035);
+          box-shadow: var(--capsule-glow-hover);
+        }
+        50% {
+          opacity: 1;
+          transform: scale(1);
+          box-shadow: var(--capsule-glow);
+        }
+        76% {
+          opacity: 0.42;
+          transform: scale(1.035);
+          box-shadow: var(--capsule-glow-hover);
+        }
+      }
+
+      .smart-capsule.choose-blink {
+        animation: capsuleChooseBlink 0.52s cubic-bezier(0.22, 1, 0.36, 1);
       }
 
       .capsule-main {
@@ -415,6 +454,10 @@
         max-width: 240px;
         line-height: 1.2;
         margin-right: 4px;
+      }
+
+      .smart-clipboard-layer.dual-capsules .capsule-text {
+        max-width: 155px;
       }
 
       .capsule-text.fade-end {
@@ -672,6 +715,39 @@
         user-select: none;
       }
 
+      .fluent-menu.clipboard-screen {
+        width: 326px;
+        min-width: 296px;
+        max-width: calc(100vw - 16px);
+        box-sizing: border-box;
+      }
+
+      .menu-section-title {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+        padding: 5px 10px 2px;
+        user-select: none;
+        letter-spacing: 0.01em;
+      }
+
+      .shortcut-badge {
+        display: inline-flex;
+        align-items: center;
+        height: 19px;
+        padding: 0 6px;
+        border-radius: 4px;
+        border: 1px solid var(--menu-border);
+        background-color: var(--hover-bg);
+        color: var(--text-muted);
+        font-family: var(--mnt-font);
+        font-size: 10.5px;
+        font-weight: 500;
+        line-height: 1;
+        flex-shrink: 0;
+        white-space: nowrap;
+      }
+
       ${window.MNT_Collections ? window.MNT_Collections.getStyles() : ""}
     `;
 
@@ -699,36 +775,6 @@
 
     const clipboardLayer = document.createElement("div");
     clipboardLayer.className = "smart-clipboard-layer";
-
-    const capsule = document.createElement("div");
-    capsule.className = "smart-capsule";
-
-    const capsuleMain = document.createElement("button");
-    capsuleMain.className = "capsule-main";
-    capsuleMain.type = "button";
-
-    const capsuleCat = document.createElement("span");
-    capsuleCat.className = "capsule-cat";
-
-    const capsuleSep1 = document.createElement("span");
-    capsuleSep1.className = "capsule-sep";
-
-    const capsuleText = document.createElement("span");
-    capsuleText.className = "capsule-text";
-
-    capsuleMain.appendChild(capsuleCat);
-    capsuleMain.appendChild(capsuleSep1);
-    capsuleMain.appendChild(capsuleText);
-
-    const capsuleClose = document.createElement("button");
-    capsuleClose.className = "capsule-close";
-    capsuleClose.type = "button";
-    capsuleClose.title = "Ignorar sugestão";
-    capsuleClose.innerHTML = ICONS.close;
-
-    capsule.appendChild(capsuleMain);
-    capsule.appendChild(capsuleClose);
-    clipboardLayer.appendChild(capsule);
 
     const moreBtn = document.createElement("button");
     moreBtn.className = "more-btn";
@@ -761,11 +807,6 @@
       wrapper,
       strip,
       clipboardLayer,
-      capsule,
-      capsuleMain,
-      capsuleCat,
-      capsuleText,
-      capsuleClose,
       moreBtn,
       settingsMenu,
       contextMenu,
@@ -774,7 +815,7 @@
       isMenuOpen: false,
       isCollectionOverlayOpen: false,
       isSuggestionRevealed: false,
-      activeSuggestion: null,
+      activeSuggestions: [],
       suggestionTimer: null,
       suggestionDeadline: 0,
       suggestionRemainingMs: 0,
@@ -834,6 +875,7 @@
       reRenderSettingsMenu: renderSettingsMenu,
       openSettingsPanel: () => {
         if (!ui) return;
+        ui.settingsMenu.classList.remove("clipboard-screen");
         ui.settingsMenu.style.top = "35px";
         ui.settingsMenu.style.right = "8px";
         ui.settingsMenu.style.left = "auto";
@@ -861,27 +903,98 @@
     });
   }
 
-  function showClipboardSuggestion(suggestion) {
-    if (!ui || !suggestion || !currentSettings?.smartClipboard) return;
+  function pauseSuggestionTimer() {
+    if (!ui || ui.activeSuggestions.length === 0 || !ui.suggestionTimer) return;
+    const remaining = Math.max(4000, ui.suggestionDeadline - Date.now());
+    ui.suggestionRemainingMs = remaining;
+    clearTimeout(ui.suggestionTimer);
+    ui.suggestionTimer = null;
+  }
+
+  function resumeSuggestionTimer() {
+    if (!ui || ui.activeSuggestions.length === 0 || ui.suggestionTimer) return;
+    const waitMs = Math.max(4000, ui.suggestionRemainingMs || 6000);
+    ui.suggestionDeadline = Date.now() + waitMs;
+    ui.suggestionTimer = setTimeout(() => {
+      hideClipboardSuggestion();
+    }, waitMs);
+  }
+
+  function createCapsuleElement(item, maxCharsThreshold) {
+    const capsule = document.createElement("div");
+    capsule.className = "smart-capsule";
+
+    const capsuleMain = document.createElement("button");
+    capsuleMain.className = "capsule-main";
+    capsuleMain.type = "button";
+
+    const capsuleCat = document.createElement("span");
+    capsuleCat.className = "capsule-cat";
+    capsuleCat.textContent = item.label;
+
+    const capsuleSep = document.createElement("span");
+    capsuleSep.className = "capsule-sep";
+
+    const capsuleText = document.createElement("span");
+    capsuleText.className = "capsule-text";
+    capsuleText.textContent = item.preview;
+    if (item.isOverflowing || (item.preview && item.preview.length > maxCharsThreshold)) {
+      capsuleText.classList.add("fade-end");
+    }
+
+    const tooltipPreview = String(item.payload || "").replace(/\s+/g, " ").trim().slice(0, 140);
+    capsuleMain.title = `${item.label}: ${tooltipPreview}`;
+
+    capsuleMain.appendChild(capsuleCat);
+    capsuleMain.appendChild(capsuleSep);
+    capsuleMain.appendChild(capsuleText);
+
+    const capsuleClose = document.createElement("button");
+    capsuleClose.className = "capsule-close";
+    capsuleClose.type = "button";
+    capsuleClose.title = "Ignorar sugestão";
+    capsuleClose.innerHTML = ICONS.close;
+
+    capsuleMain.addEventListener("click", (e) => {
+      e.stopPropagation();
+      applyClipboardSuggestion(item);
+    });
+
+    capsuleClose.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hideClipboardSuggestion();
+    });
+
+    capsule.addEventListener("mouseenter", pauseSuggestionTimer);
+    capsule.addEventListener("mouseleave", resumeSuggestionTimer);
+
+    capsule.appendChild(capsuleMain);
+    capsule.appendChild(capsuleClose);
+    return capsule;
+  }
+
+  function showClipboardSuggestion(suggestionsInput) {
+    if (!ui || !suggestionsInput || !currentSettings?.smartClipboard) return;
+    const items = (Array.isArray(suggestionsInput) ? suggestionsInput : [suggestionsInput]).filter(Boolean);
+    if (items.length === 0) return;
+
     if (ui.collectionsController && ui.collectionsController.isActivelyEditing()) return;
     if (ui.collectionsController && ui.collectionsController.isViewOpen()) {
       ui.collectionsController.closeAllCollectionOverlays();
     }
 
     clearTimeout(ui.suggestionTimer);
-    ui.activeSuggestion = suggestion;
+    ui.activeSuggestions = items;
     ui.isSuggestionRevealed = true;
 
-    ui.capsuleCat.textContent = suggestion.label;
-    ui.capsuleText.textContent = suggestion.preview;
-    if (suggestion.isOverflowing || (suggestion.preview && suggestion.preview.length > 20)) {
-      ui.capsuleText.classList.add("fade-end");
-    } else {
-      ui.capsuleText.classList.remove("fade-end");
-    }
+    ui.clipboardLayer.textContent = "";
+    const isDual = items.length > 1;
+    ui.clipboardLayer.classList.toggle("dual-capsules", isDual);
 
-    const tooltipPreview = String(suggestion.payload || "").replace(/\s+/g, " ").trim().slice(0, 140);
-    ui.capsuleMain.title = `${suggestion.label}: ${tooltipPreview}`;
+    const fadeThreshold = isDual ? 16 : 20;
+    items.forEach((item) => {
+      ui.clipboardLayer.appendChild(createCapsuleElement(item, fadeThreshold));
+    });
 
     ui.wrapper.classList.add("has-suggestion");
     updateBarVisibilityState();
@@ -900,21 +1013,42 @@
     ui.suggestionTimer = null;
     ui.suggestionDeadline = 0;
     ui.suggestionRemainingMs = 0;
-    ui.activeSuggestion = null;
+    ui.activeSuggestions = [];
     ui.isSuggestionRevealed = false;
     ui.wrapper.classList.remove("has-suggestion");
+    ui.clipboardLayer.classList.remove("dual-capsules");
     updateBarVisibilityState();
   }
 
-  function applyClipboardSuggestion() {
-    if (!ui || !ui.activeSuggestion) return;
-    const suggestion = ui.activeSuggestion;
+  function blinkActiveCapsules() {
+    if (!ui || !ui.clipboardLayer) return;
+    const capsules = ui.clipboardLayer.querySelectorAll(".smart-capsule");
+    capsules.forEach((cap) => {
+      cap.classList.remove("choose-blink");
+      void cap.offsetWidth;
+      cap.classList.add("choose-blink");
+    });
+    if (ui.suggestionTimer) {
+      const minRemain = Math.max(6000, ui.suggestionDeadline - Date.now());
+      clearTimeout(ui.suggestionTimer);
+      ui.suggestionRemainingMs = minRemain;
+      ui.suggestionDeadline = Date.now() + minRemain;
+      ui.suggestionTimer = setTimeout(() => {
+        hideClipboardSuggestion();
+      }, minRemain);
+    }
+  }
+
+  function applyClipboardSuggestion(targetItem) {
+    if (!ui || ui.activeSuggestions.length === 0) return;
+    const suggestion = targetItem || ui.activeSuggestions[0];
+    if (!suggestion) return;
     hideClipboardSuggestion();
 
     const api = window.MNT_SmartClipboard;
     if (!api) return;
 
-    if (suggestion.category === "site" || suggestion.category === "maps") {
+    if (suggestion.category === "site" || suggestion.category === "maps" || suggestion.category === "dict") {
       const targetUrl = api.buildTargetUrl(suggestion, currentSettings);
       if (!targetUrl || !isSafeUrl(targetUrl)) return;
 
@@ -931,41 +1065,109 @@
       return;
     }
 
-    if (suggestion.category === "colar" || suggestion.category === "palavra" || suggestion.category === "code") {
+    if (suggestion.category === "colar" || suggestion.category === "code") {
       const engine = detectCurrentEngine();
       api.pasteIntoEngineInput(suggestion.payload, engine);
     }
   }
 
+  function isEditableTarget(el) {
+    if (!el || typeof el !== "object" || el.nodeType !== 1) return false;
+    const tag = (el.tagName || "").toUpperCase();
+    if (tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (tag === "INPUT") {
+      const type = (el.type || "text").toLowerCase();
+      const nonTextTypes = new Set([
+        "button",
+        "checkbox",
+        "color",
+        "file",
+        "hidden",
+        "image",
+        "radio",
+        "range",
+        "reset",
+        "submit"
+      ]);
+      return !nonTextTypes.has(type);
+    }
+    if (el.isContentEditable) return true;
+    const ce = typeof el.getAttribute === "function" ? el.getAttribute("contenteditable") : null;
+    if (ce === "" || ce === "true" || ce === "plaintext-only") return true;
+    const role = (typeof el.getAttribute === "function" ? el.getAttribute("role") || "" : "").toLowerCase();
+    if (role === "textbox" || role === "searchbox" || role === "combobox") return true;
+    return false;
+  }
+
+  function isAnyTextInputActive(e) {
+    if (ui?.collectionsController?.isActivelyEditing?.()) return true;
+    if (e && typeof e.composedPath === "function") {
+      const path = e.composedPath();
+      for (let i = 0; i < path.length; i++) {
+        if (isEditableTarget(path[i])) return true;
+      }
+    }
+    let active = document.activeElement;
+    while (active) {
+      if (isEditableTarget(active)) return true;
+      active = active.shadowRoot ? active.shadowRoot.activeElement : null;
+    }
+    if (isEditableTarget(ui?.shadow?.activeElement)) return true;
+    return false;
+  }
+
   function setupSmartClipboard() {
     if (!ui || !window.MNT_SmartClipboard) return;
 
-    ui.capsuleMain.addEventListener("click", (e) => {
-      e.stopPropagation();
-      applyClipboardSuggestion();
-    });
+    let lastSpacePressAt = 0;
 
-    ui.capsuleClose.addEventListener("click", (e) => {
-      e.stopPropagation();
-      hideClipboardSuggestion();
-    });
+    const onGlobalKeyDown = (e) => {
+      if (
+        !ui ||
+        !currentSettings?.smartClipboard ||
+        currentSettings?.clipboardShortcut === false ||
+        !Array.isArray(ui.activeSuggestions) ||
+        ui.activeSuggestions.length === 0 ||
+        ui.isMenuOpen ||
+        ui.isCollectionOverlayOpen
+      ) {
+        lastSpacePressAt = 0;
+        return;
+      }
 
-    ui.capsule.addEventListener("mouseenter", () => {
-      if (!ui || !ui.activeSuggestion || !ui.suggestionTimer) return;
-      const remaining = Math.max(4000, ui.suggestionDeadline - Date.now());
-      ui.suggestionRemainingMs = remaining;
-      clearTimeout(ui.suggestionTimer);
-      ui.suggestionTimer = null;
-    });
+      const isSpace = e.code === "Space" || e.key === " ";
+      if (!isSpace) {
+        lastSpacePressAt = 0;
+        return;
+      }
 
-    ui.capsule.addEventListener("mouseleave", () => {
-      if (!ui || !ui.activeSuggestion || ui.suggestionTimer) return;
-      const waitMs = Math.max(4000, ui.suggestionRemainingMs || 6000);
-      ui.suggestionDeadline = Date.now() + waitMs;
-      ui.suggestionTimer = setTimeout(() => {
-        hideClipboardSuggestion();
-      }, waitMs);
-    });
+      if (e.repeat || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) {
+        lastSpacePressAt = 0;
+        return;
+      }
+
+      if (isAnyTextInputActive(e)) {
+        lastSpacePressAt = 0;
+        return;
+      }
+
+      const now = performance.now();
+      if (lastSpacePressAt > 0 && now - lastSpacePressAt <= 380) {
+        lastSpacePressAt = 0;
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (ui.activeSuggestions.length === 1) {
+          applyClipboardSuggestion(ui.activeSuggestions[0]);
+        } else {
+          blinkActiveCapsules();
+        }
+      } else {
+        lastSpacePressAt = now;
+      }
+    };
+
+    window.addEventListener("keydown", onGlobalKeyDown);
 
     ui.clipboardController = window.MNT_SmartClipboard.createController({
       getEngine: detectCurrentEngine,
@@ -976,6 +1178,7 @@
     ui.clipboardController.syncWithSettings();
 
     ui.cleanupFns.push(() => {
+      window.removeEventListener("keydown", onGlobalKeyDown);
       clearTimeout(ui?.suggestionTimer);
       if (ui?.clipboardController) {
         ui.clipboardController.stop();
@@ -1099,7 +1302,7 @@
   function renderSettingsMenu() {
     if (!ui) return;
     ui.collectionsController?.closeItemActionsMenu();
-    ui.settingsMenu.classList.remove("collections-screen");
+    ui.settingsMenu.classList.remove("collections-screen", "clipboard-screen");
     ui.settingsMenu.innerHTML = "";
 
     const searchEngineOptions = [
@@ -1281,89 +1484,20 @@
     ui.settingsMenu.appendChild(smartClipBtn);
 
     if (currentSettings.smartClipboard) {
-      const mapOptions = [
-        { id: "google", label: "Google Maps" },
-        { id: "bing", label: "Bing Maps" },
-        { id: "apple", label: "Apple Maps" }
-      ];
-
-      const mapRow = document.createElement("div");
-      mapRow.className = "menu-row has-submenu sub-setting-row";
-      mapRow.innerHTML = `
+      const customizeClipBtn = document.createElement("button");
+      customizeClipBtn.type = "button";
+      customizeClipBtn.className = "menu-row";
+      customizeClipBtn.innerHTML = `
         <div class="menu-row-left">
           <span class="check-slot"></span>
-          <span>Mapa padrão</span>
+          <span>Personalizar</span>
         </div>
-        ${ICONS.chevronRight}
       `;
-
-      const mapSubmenu = document.createElement("div");
-      mapSubmenu.className = "submenu";
-      const activeMap = currentSettings.clipboardMapProvider || "google";
-
-      mapOptions.forEach((opt) => {
-        const btn = document.createElement("button");
-        btn.className = "menu-row";
-        const isSelected = activeMap === opt.id;
-        btn.innerHTML = `
-          <div class="menu-row-left">
-            <span class="check-slot">${isSelected ? ICONS.check : ""}</span>
-            <span>${opt.label}</span>
-          </div>
-        `;
-        btn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          saveSetting({ clipboardMapProvider: opt.id }, () => {
-            renderSettingsMenu();
-            closeAllMenus();
-          });
-        });
-        mapSubmenu.appendChild(btn);
+      customizeClipBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        renderClipboardSettingsScreen();
       });
-      mapRow.appendChild(mapSubmenu);
-
-      const openModeOptions = [
-        { id: "new_tab", label: "Nova guia" },
-        { id: "current_tab", label: "Na guia atual" }
-      ];
-
-      const openModeRow = document.createElement("div");
-      openModeRow.className = "menu-row has-submenu sub-setting-row";
-      openModeRow.innerHTML = `
-        <div class="menu-row-left">
-          <span class="check-slot"></span>
-          <span>Abrir sugestão</span>
-        </div>
-        ${ICONS.chevronRight}
-      `;
-
-      const openModeSubmenu = document.createElement("div");
-      openModeSubmenu.className = "submenu";
-      const activeOpenMode = currentSettings.clipboardOpenMode || "new_tab";
-
-      openModeOptions.forEach((opt) => {
-        const btn = document.createElement("button");
-        btn.className = "menu-row";
-        const isSelected = activeOpenMode === opt.id;
-        btn.innerHTML = `
-          <div class="menu-row-left">
-            <span class="check-slot">${isSelected ? ICONS.check : ""}</span>
-            <span>${opt.label}</span>
-          </div>
-        `;
-        btn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          saveSetting({ clipboardOpenMode: opt.id }, () => {
-            renderSettingsMenu();
-            closeAllMenus();
-          });
-        });
-        openModeSubmenu.appendChild(btn);
-      });
-      openModeRow.appendChild(openModeSubmenu);
-
-      ui.settingsMenu.appendChild(mapRow);
-      ui.settingsMenu.appendChild(openModeRow);
+      ui.settingsMenu.appendChild(customizeClipBtn);
     }
 
     if (ui.collectionsController) {
@@ -1376,10 +1510,298 @@
     ui.settingsMenu.appendChild(aboutBtn);
   }
 
-  function renderAboutMenu() {
+  function renderClipboardSettingsScreen() {
     if (!ui) return;
     ui.collectionsController?.closeItemActionsMenu();
     ui.settingsMenu.classList.remove("collections-screen");
+    ui.settingsMenu.classList.add("clipboard-screen");
+    ui.settingsMenu.textContent = "";
+
+    // 1. Cabeçalho: < Clipboard Inteligente
+    const headerBtn = document.createElement("button");
+    headerBtn.type = "button";
+    headerBtn.className = "col-screen-header";
+    headerBtn.title = "Voltar para Mais opções";
+
+    const backIcon = document.createElement("span");
+    backIcon.className = "col-screen-back";
+    backIcon.innerHTML = ICONS.chevronLeft;
+
+    const headerTitle = document.createElement("span");
+    headerTitle.textContent = "Clipboard Inteligente";
+
+    headerBtn.appendChild(backIcon);
+    headerBtn.appendChild(headerTitle);
+    headerBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      renderSettingsMenu();
+    });
+    ui.settingsMenu.appendChild(headerBtn);
+
+    // 2. Descrição de privacidade e funcionamento local
+    const desc = document.createElement("div");
+    desc.className = "col-menu-desc";
+    desc.textContent =
+      "Sugestões inteligentes para a sua área de transferência no buscador inicial definido no navegador. Tudo é identificado localmente e nunca é enviado para servidores externos.";
+    ui.settingsMenu.appendChild(desc);
+
+    // 3. Espaço em branco antes das categorias
+    const topSpacer = document.createElement("div");
+    topSpacer.className = "col-menu-spacer";
+    ui.settingsMenu.appendChild(topSpacer);
+
+    // 4. Categoria: Abrir sugestão
+    const openSectionTitle = document.createElement("div");
+    openSectionTitle.className = "menu-section-title";
+    openSectionTitle.textContent = "Abrir sugestão";
+    ui.settingsMenu.appendChild(openSectionTitle);
+
+    const activeOpenMode = currentSettings.clipboardOpenMode || "new_tab";
+    const openModeOptions = [
+      { id: "current_tab", label: "Abrir na guia atual" },
+      { id: "new_tab", label: "Abrir em nova guia" }
+    ];
+
+    openModeOptions.forEach((opt) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "menu-row";
+      const isSelected = activeOpenMode === opt.id;
+      btn.innerHTML = `
+        <div class="menu-row-left">
+          <span class="check-slot">${isSelected ? ICONS.check : ""}</span>
+          <span>${opt.label}</span>
+        </div>
+      `;
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        saveSetting({ clipboardOpenMode: opt.id }, () => {
+          renderClipboardSettingsScreen();
+        });
+      });
+      ui.settingsMenu.appendChild(btn);
+    });
+
+    const div1 = document.createElement("div");
+    div1.className = "menu-divider";
+    ui.settingsMenu.appendChild(div1);
+
+    // 5. Categoria: Serviços preferidos (Mapas > e Dicionário >)
+    const servicesTitle = document.createElement("div");
+    servicesTitle.className = "menu-section-title";
+    servicesTitle.textContent = "Serviços preferidos";
+    ui.settingsMenu.appendChild(servicesTitle);
+
+    const createSubmenuServiceRow = (rowLabel, options, activeId, onSelect) => {
+      const row = document.createElement("div");
+      row.className = "menu-row has-submenu";
+
+      const left = document.createElement("div");
+      left.className = "menu-row-left";
+      const slot = document.createElement("span");
+      slot.className = "check-slot";
+      const lbl = document.createElement("span");
+      lbl.textContent = rowLabel;
+      left.appendChild(slot);
+      left.appendChild(lbl);
+
+      const arrowWrap = document.createElement("span");
+      arrowWrap.style.display = "inline-flex";
+      arrowWrap.innerHTML = ICONS.chevronRight;
+
+      row.appendChild(left);
+      row.appendChild(arrowWrap);
+
+      const sub = document.createElement("div");
+      sub.className = "submenu";
+
+      options.forEach((opt) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "menu-row";
+        const isSelected = activeId === opt.id;
+        btn.innerHTML = `
+          <div class="menu-row-left">
+            <span class="check-slot">${isSelected ? ICONS.check : ""}</span>
+            <span>${opt.label}</span>
+          </div>
+        `;
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          onSelect(opt.id);
+        });
+        sub.appendChild(btn);
+      });
+
+      row.appendChild(sub);
+      return row;
+    };
+
+    const mapRow = createSubmenuServiceRow(
+      "Mapas",
+      [
+        { id: "google", label: "Google Maps" },
+        { id: "bing", label: "Bing Maps" },
+        { id: "apple", label: "Apple Maps" }
+      ],
+      currentSettings.clipboardMapProvider || "google",
+      (selectedId) => {
+        saveSetting({ clipboardMapProvider: selectedId }, () => {
+          renderClipboardSettingsScreen();
+        });
+      }
+    );
+    ui.settingsMenu.appendChild(mapRow);
+
+    const dictRow = createSubmenuServiceRow(
+      "Dicionário",
+      [
+        { id: "dicio", label: "Dicio" },
+        { id: "sinonimos", label: "Sinônimos" },
+        { id: "linguee", label: "Linguee" }
+      ],
+      currentSettings.clipboardDictProvider || "dicio",
+      (selectedId) => {
+        saveSetting({ clipboardDictProvider: selectedId }, () => {
+          renderClipboardSettingsScreen();
+        });
+      }
+    );
+    ui.settingsMenu.appendChild(dictRow);
+
+    const div2 = document.createElement("div");
+    div2.className = "menu-divider";
+    ui.settingsMenu.appendChild(div2);
+
+    // 6. Categoria: Sugestões (Todas + filtro individual + Desativar função + Atalho)
+    const suggestionsTitle = document.createElement("div");
+    suggestionsTitle.className = "menu-section-title";
+    suggestionsTitle.textContent = "Sugestões";
+    ui.settingsMenu.appendChild(suggestionsTitle);
+
+    const allCategoriesActive = currentSettings.clipboardAllCategories !== false;
+
+    const allBtn = document.createElement("button");
+    allBtn.type = "button";
+    allBtn.className = "menu-row";
+    allBtn.innerHTML = `
+      <div class="menu-row-left">
+        <span class="check-slot">${allCategoriesActive ? ICONS.check : ""}</span>
+        <span>Todas</span>
+      </div>
+    `;
+    allBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      saveSetting({ clipboardAllCategories: !allCategoriesActive }, () => {
+        renderClipboardSettingsScreen();
+      });
+    });
+    ui.settingsMenu.appendChild(allBtn);
+
+    if (!allCategoriesActive) {
+      const defaultCats = { colar: true, site: true, code: true, maps: true, dict: true };
+      const currentCats = {
+        ...defaultCats,
+        ...(currentSettings.clipboardCategories || {})
+      };
+
+      const categoryItems = [
+        { key: "colar", label: "Colar" },
+        { key: "site", label: "Site" },
+        { key: "code", label: "Code (somente IA)" },
+        { key: "maps", label: "Mapa" },
+        { key: "dict", label: "Dicionário" }
+      ];
+
+      categoryItems.forEach((cat) => {
+        const isCatOn = currentCats[cat.key] !== false;
+        const catBtn = document.createElement("button");
+        catBtn.type = "button";
+        catBtn.className = "menu-row";
+        catBtn.innerHTML = `
+          <div class="menu-row-left">
+            <span class="check-slot">${isCatOn ? ICONS.check : ""}</span>
+            <span>${cat.label}</span>
+          </div>
+        `;
+        catBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const updatedCats = { ...currentCats, [cat.key]: !isCatOn };
+          saveSetting({ clipboardCategories: updatedCats }, () => {
+            if (isCatOn && ui.activeSuggestions.length > 0) {
+              const remaining = ui.activeSuggestions.filter((s) => updatedCats[s.category] !== false);
+              if (remaining.length === 0) {
+                hideClipboardSuggestion();
+              } else if (remaining.length !== ui.activeSuggestions.length) {
+                showClipboardSuggestion(remaining);
+              }
+            }
+            renderClipboardSettingsScreen();
+          });
+        });
+        ui.settingsMenu.appendChild(catBtn);
+      });
+    }
+
+    const disableBtn = document.createElement("button");
+    disableBtn.type = "button";
+    disableBtn.className = "menu-row danger-row";
+    disableBtn.innerHTML = `
+      <div class="menu-row-left">
+        <span class="check-slot"></span>
+        <span>Desativar função</span>
+      </div>
+    `;
+    disableBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      saveSetting({ smartClipboard: false }, () => {
+        hideClipboardSuggestion();
+        if (ui && ui.clipboardController) {
+          ui.clipboardController.syncWithSettings();
+        }
+        renderSettingsMenu();
+      });
+    });
+    ui.settingsMenu.appendChild(disableBtn);
+
+    const shortcutSpacer = document.createElement("div");
+    shortcutSpacer.className = "col-menu-spacer";
+    ui.settingsMenu.appendChild(shortcutSpacer);
+
+    const shortcutActive = currentSettings.clipboardShortcut !== false;
+    const shortcutBtn = document.createElement("button");
+    shortcutBtn.type = "button";
+    shortcutBtn.className = "menu-row";
+
+    const shortcutLeft = document.createElement("div");
+    shortcutLeft.className = "menu-row-left";
+    const shortcutCheck = document.createElement("span");
+    shortcutCheck.className = "check-slot";
+    shortcutCheck.innerHTML = shortcutActive ? ICONS.check : "";
+    const shortcutLabel = document.createElement("span");
+    shortcutLabel.textContent = "Atalho de preenchimento";
+    shortcutLeft.appendChild(shortcutCheck);
+    shortcutLeft.appendChild(shortcutLabel);
+
+    const shortcutBadge = document.createElement("span");
+    shortcutBadge.className = "shortcut-badge";
+    shortcutBadge.textContent = "Espaço 2x";
+
+    shortcutBtn.appendChild(shortcutLeft);
+    shortcutBtn.appendChild(shortcutBadge);
+    shortcutBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      saveSetting({ clipboardShortcut: !shortcutActive }, () => {
+        renderClipboardSettingsScreen();
+      });
+    });
+    ui.settingsMenu.appendChild(shortcutBtn);
+  }
+
+  function renderAboutMenu() {
+    if (!ui) return;
+    ui.collectionsController?.closeItemActionsMenu();
+    ui.settingsMenu.classList.remove("collections-screen", "clipboard-screen");
     ui.settingsMenu.textContent = "";
 
     const version = chrome.runtime.getManifest?.()?.version || "2.0";
@@ -1506,7 +1928,7 @@
   function closeHostMenusOnly() {
     if (!ui) return;
     ui.collectionsController?.closeItemActionsMenu();
-    ui.settingsMenu.classList.remove("open", "collections-screen");
+    ui.settingsMenu.classList.remove("open", "collections-screen", "clipboard-screen");
     ui.contextMenu.classList.remove("open");
     ui.folderDropdown.classList.remove("open");
     ui.moreBtn.classList.remove("active");

@@ -63,14 +63,14 @@ Mecanismos como o Google usam tons específicos de cinza-azulado no modo escuro,
 - **Detecção Automática Edge / Chrome**: Na primeira inicialização, a extensão detecta automaticamente o navegador para configurar o atalho **Editar favoritos...** para `edge://favorites/` no Microsoft Edge ou `chrome://bookmarks/` no Google Chrome, sem qualquer custo de performance.
 
 ### 5. Clipboard Inteligente (Sensível ao Contexto e ao Mecanismo)
-Disponível no menu da barra (**Mais opções → Clipboard inteligente**, desativado por padrão e arquitetado em arquivo dedicado `smart-clipboard.js` por transparência), o recurso analisa de forma assíncrona, local e privada novos itens copiados pelo usuário para oferecer ações rápidas em uma cápsula iluminada no centro da barra:
+Ativo por padrão e arquitetado em arquivo dedicado (`smart-clipboard.js`) por transparência, o recurso analisa localmente e de forma assíncrona novos itens copiados pelo usuário para oferecer ações rápidas em cápsulas iluminadas no centro da barra — sem jamais enviar dados para servidores externos. Em **Mais opções → Personalizar**, o usuário configura abertura (nova guia ou guia atual), serviços preferidos, quais categorias deseja receber e o atalho rápido:
 - **Categorias Inteligentes**:
   - `Site`: identifica URLs puras ou inseridas em mensagens curtas e oferece abertura rápida.
-  - `Mapa`: extrai endereços físicos puros ou dentro de frases conversacionais (ex: *"me encontre aqui na av. marechal castelo branco"*) e abre diretamente no provedor de mapas escolhido (**Google Maps**, **Bing Maps** ou **Apple Maps**).
-  - `Code`: identifica trechos de código-fonte inspecionando apenas as primeiras linhas (sem custo de memória em arquivos grandes) e sugere colar **exclusivamente** quando o mecanismo ativo é uma IA.
-  - `Palavra`: sugere pesquisar ou consultar termos únicos tanto nos buscadores tradicionais quanto nas IAs.
+  - `Mapa`: extrai endereços físicos puros ou dentro de frases conversacionais (ex: *"me encontre aqui na av. marechal castelo branco"*) e abre diretamente no provedor escolhido (**Google Maps**, **Bing Maps** ou **Apple Maps**).
+  - `Code`: identifica trechos de código-fonte com detecção generalista de alta precisão nas primeiras linhas (Python, Java, Go, HTML, CSS, JavaScript, SQL e linguagens similares, sem custo de memória em arquivos grandes) e sugere colar **exclusivamente** quando o mecanismo ativo é uma IA.
+  - `Dicionário` + `Colar` (Palavra única): ao copiar uma única palavra, exibe duas cápsulas lado a lado para consultar no dicionário preferido (**Dicio**, **Sinônimos** ou **Linguee**) ou colar diretamente no buscador/IA.
   - `Colar`: diferencia automaticamente pesquisas curtas/médias de buscadores (respeitando o limite técnico de 32 palavras do Google) de prompts mais elaborados (até 3 parágrafos médios, oferecidos apenas para IAs, descartando artigos extensos já nas primeiras linhas).
-- **Colagem Não-Destrutiva e Memória de Análise**: Ao colar no buscador ou na IA, o texto já digitado na caixa de entrada é sempre preservado (anexando ao final sem enviar automaticamente). A extensão armazena apenas uma assinatura hash (`FNV-1a`) do último item analisado para jamais repetir a mesma sugestão ou gravar textos da área de transferência em disco.
+- **Atalho Rápido (`Espaço 2x`), Colagem Não-Destrutiva e Memória de Análise**: Sem nenhum campo de texto focado, pressionar **Espaço duas vezes** aciona instantaneamente a sugestão exibida (ou sinaliza sutilmente quando há duas opções para escolha). Ao colar no buscador ou na IA, o texto já digitado é sempre preservado ao início sem envio automático, e apenas uma assinatura hash (`FNV-1a`) é salva para nunca repetir a mesma sugestão ou gravar textos copiados em disco.
 
 
 

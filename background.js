@@ -12,8 +12,16 @@ const ENGINES = {
 const VALID_VISIBILITY = new Set(["home_only", "always", "never"]);
 const VALID_FAVORITES_URLS = new Set(["edge://favorites/", "chrome://bookmarks/"]);
 const VALID_MAP_PROVIDERS = new Set(["google", "bing", "apple"]);
+const VALID_DICT_PROVIDERS = new Set(["dicio", "sinonimos", "linguee"]);
 const VALID_CLIPBOARD_OPEN_MODES = new Set(["new_tab", "current_tab"]);
 const CLIPBOARD_HASH_REGEX = /^[a-zA-Z0-9:_-]{0,64}$/;
+const DEFAULT_CLIPBOARD_CATEGORIES = {
+  colar: true,
+  site: true,
+  code: true,
+  maps: true,
+  dict: true
+};
 const RGBA_COLOR_REGEX = /^rgba\((\d{1,3}),\s*(\d{1,3}),\s*(\d{1,3}),\s*([01](?:\.\d+)?)\)$/;
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 const COLLECTION_ID_REGEX = /^col_[a-zA-Z0-9_-]{4,36}$/;
@@ -51,9 +59,14 @@ const DEFAULT_SETTINGS = {
   engine: "google",
   barVisibility: "home_only", // "home_only" | "always" | "never"
   acceleration: true,
-  smartClipboard: false,
+  smartClipboard: true,
+  smartClipboardDefaultV2Applied: false,
   clipboardMapProvider: "google", // "google" | "bing" | "apple"
+  clipboardDictProvider: "dicio", // "dicio" | "sinonimos" | "linguee"
   clipboardOpenMode: "new_tab", // "new_tab" | "current_tab"
+  clipboardAllCategories: true,
+  clipboardCategories: { ...DEFAULT_CLIPBOARD_CATEGORIES },
+  clipboardShortcut: true,
   lastClipboardHash: "",
   favoritesUrl: detectFavoritesUrl(),
   collections: [],
@@ -151,6 +164,17 @@ function sanitizeBarBookmarksOrder(rawOrder) {
   return safeOrder;
 }
 
+function sanitizeClipboardCategories(rawCats) {
+  if (!rawCats || typeof rawCats !== "object" || Array.isArray(rawCats)) return null;
+  const clean = { ...DEFAULT_CLIPBOARD_CATEGORIES };
+  for (const key of Object.keys(DEFAULT_CLIPBOARD_CATEGORIES)) {
+    if (typeof rawCats[key] === "boolean") {
+      clean[key] = rawCats[key];
+    }
+  }
+  return clean;
+}
+
 // Valida e filtra apenas configurações permitidas antes de salvar no storage
 function sanitizeSettingsPartial(raw) {
   const clean = {};
@@ -171,8 +195,23 @@ function sanitizeSettingsPartial(raw) {
   if (typeof raw.clipboardMapProvider === "string" && VALID_MAP_PROVIDERS.has(raw.clipboardMapProvider)) {
     clean.clipboardMapProvider = raw.clipboardMapProvider;
   }
+  if (typeof raw.clipboardDictProvider === "string" && VALID_DICT_PROVIDERS.has(raw.clipboardDictProvider)) {
+    clean.clipboardDictProvider = raw.clipboardDictProvider;
+  }
   if (typeof raw.clipboardOpenMode === "string" && VALID_CLIPBOARD_OPEN_MODES.has(raw.clipboardOpenMode)) {
     clean.clipboardOpenMode = raw.clipboardOpenMode;
+  }
+  if (typeof raw.clipboardAllCategories === "boolean") {
+    clean.clipboardAllCategories = raw.clipboardAllCategories;
+  }
+  if (raw.clipboardCategories && typeof raw.clipboardCategories === "object") {
+    const safeCats = sanitizeClipboardCategories(raw.clipboardCategories);
+    if (safeCats !== null) {
+      clean.clipboardCategories = safeCats;
+    }
+  }
+  if (typeof raw.clipboardShortcut === "boolean") {
+    clean.clipboardShortcut = raw.clipboardShortcut;
   }
   if (typeof raw.lastClipboardHash === "string" && CLIPBOARD_HASH_REGEX.test(raw.lastClipboardHash)) {
     clean.lastClipboardHash = raw.lastClipboardHash;
@@ -264,12 +303,26 @@ async function closeOffscreenDocumentIfDisabled() {
 
 function syncSettingsCache(callback) {
   chrome.storage.local.get(DEFAULT_SETTINGS, (res) => {
+    const needsDefaultV2Migration = !res.smartClipboardDefaultV2Applied;
+    const effectiveSmartClipboard = needsDefaultV2Migration ? true : Boolean(res.smartClipboard);
+
     cachedSettings = {
       ...DEFAULT_SETTINGS,
       ...res,
+      smartClipboard: effectiveSmartClipboard,
+      smartClipboardDefaultV2Applied: true,
+      clipboardCategories: sanitizeClipboardCategories(res.clipboardCategories) || { ...DEFAULT_CLIPBOARD_CATEGORIES },
       collections: sanitizeCollectionsList(res.collections) || [],
       barBookmarksOrder: sanitizeBarBookmarksOrder(res.barBookmarksOrder) || []
     };
+
+    if (needsDefaultV2Migration) {
+      chrome.storage.local.set({
+        smartClipboard: true,
+        smartClipboardDefaultV2Applied: true
+      });
+    }
+
     isCacheReady = true;
     setupPreWarmer();
     closeOffscreenDocumentIfDisabled();
@@ -282,10 +335,14 @@ chrome.runtime.onInstalled.addListener(() => {
     const favoritesUrl = VALID_FAVORITES_URLS.has(res.favoritesUrl)
       ? res.favoritesUrl
       : detectFavoritesUrl();
+    const needsDefaultV2Migration = !res.smartClipboardDefaultV2Applied;
     const merged = {
       ...DEFAULT_SETTINGS,
       ...res,
+      smartClipboard: needsDefaultV2Migration ? true : Boolean(res.smartClipboard),
+      smartClipboardDefaultV2Applied: true,
       favoritesUrl,
+      clipboardCategories: sanitizeClipboardCategories(res.clipboardCategories) || { ...DEFAULT_CLIPBOARD_CATEGORIES },
       collections: sanitizeCollectionsList(res.collections) || [],
       barBookmarksOrder: sanitizeBarBookmarksOrder(res.barBookmarksOrder) || []
     };
@@ -306,6 +363,9 @@ chrome.storage.onChanged.addListener((changes) => {
         cachedSettings.collections = sanitizeCollectionsList(changes[key].newValue) || [];
       } else if (key === "barBookmarksOrder") {
         cachedSettings.barBookmarksOrder = sanitizeBarBookmarksOrder(changes[key].newValue) || [];
+      } else if (key === "clipboardCategories") {
+        cachedSettings.clipboardCategories =
+          sanitizeClipboardCategories(changes[key].newValue) || { ...DEFAULT_CLIPBOARD_CATEGORIES };
       } else {
         cachedSettings[key] = changes[key].newValue;
       }
@@ -320,7 +380,11 @@ chrome.storage.onChanged.addListener((changes) => {
   if (
     changes.smartClipboard ||
     changes.clipboardMapProvider ||
+    changes.clipboardDictProvider ||
     changes.clipboardOpenMode ||
+    changes.clipboardAllCategories ||
+    changes.clipboardCategories ||
+    changes.clipboardShortcut ||
     changes.lastClipboardHash ||
     changes.collections ||
     changes.collectionsShowAddedOnBar ||
