@@ -86,6 +86,15 @@
     return `col_${Date.now().toString(36)}_${randHex}`;
   }
 
+  function normalizeUrlKey(rawUrl) {
+    if (typeof rawUrl !== "string" || !rawUrl) return "";
+    try {
+      return new URL(rawUrl).toString();
+    } catch (e) {
+      return rawUrl.trim();
+    }
+  }
+
   // Ordena os favoritos da barra conforme a ordem personalizada salva no My New Tab
   function sortBarBookmarks(bookmarks, orderIds) {
     if (!Array.isArray(bookmarks) || bookmarks.length <= 1) return bookmarks || [];
@@ -105,6 +114,41 @@
       if (hasA) return -1;
       if (hasB) return 1;
       return 0;
+    });
+  }
+
+  // Aplica a ordenação personalizada e oculta da barra os favoritos já adicionados em coleções (salvo se permitido nas opções)
+  function getVisibleBarBookmarks(bookmarks, settings, extraHiddenUrls = []) {
+    const sorted = sortBarBookmarks(bookmarks, settings?.barBookmarksOrder);
+    if (!Array.isArray(sorted) || sorted.length === 0) return [];
+    if (settings?.collectionsShowAddedOnBar) return sorted;
+
+    const collections = Array.isArray(settings?.collections) ? settings.collections : [];
+    const hasExtra = Array.isArray(extraHiddenUrls) && extraHiddenUrls.length > 0;
+    if (collections.length === 0 && !hasExtra) return sorted;
+
+    const addedUrls = new Set();
+    for (const col of collections) {
+      if (!col || !Array.isArray(col.items)) continue;
+      for (const item of col.items) {
+        if (item && item.url) {
+          addedUrls.add(normalizeUrlKey(item.url));
+        }
+      }
+    }
+    if (hasExtra) {
+      for (const u of extraHiddenUrls) {
+        if (u) addedUrls.add(normalizeUrlKey(u));
+      }
+    }
+
+    if (addedUrls.size === 0) return sorted;
+
+    return sorted.filter((node) => {
+      if (node && node.url) {
+        return !addedUrls.has(normalizeUrlKey(node.url));
+      }
+      return true;
     });
   }
 
@@ -144,6 +188,31 @@
 
       .collection-pill.dimmed:hover {
         opacity: 0.72;
+      }
+
+      .collection-pill.drag-drop-target {
+        transform: scale(1.05);
+        box-shadow: 0 0 0 2px var(--text-color), 0 4px 12px rgba(0, 0, 0, 0.22);
+        opacity: 1 !important;
+        filter: brightness(1.03);
+      }
+
+      @keyframes mntMergePulse {
+        0% {
+          box-shadow: 0 0 0 1.5px rgba(59, 158, 255, 0.55);
+          background-color: rgba(59, 158, 255, 0.10);
+        }
+        100% {
+          box-shadow: 0 0 0 2.5px rgba(59, 158, 255, 0.95), 0 2px 10px rgba(59, 158, 255, 0.28);
+          background-color: rgba(59, 158, 255, 0.20);
+        }
+      }
+
+      .item.merge-hold-target {
+        border-radius: 7px !important;
+        transform: scale(1.04);
+        animation: mntMergePulse 0.8s ease-in-out infinite alternate;
+        transition: transform 0.15s ease;
       }
 
       .collection-pill.drag-source,
@@ -791,24 +860,59 @@
         transform: scale(1.12);
       }
 
-      /* Submenu e Menu de Coleções */
-      .submenu.collections-submenu {
-        min-width: 278px;
-        max-width: 300px;
+      /* Tela de Coleções dentro do menu de ajustes */
+      .fluent-menu.collections-screen {
+        width: 332px;
+        min-width: 300px;
+        max-width: calc(100vw - 16px);
+        box-sizing: border-box;
       }
 
-      .col-standalone-menu {
-        min-width: 278px;
-        max-width: 300px;
+      .col-screen-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 8px 2px;
+        border: none;
+        background: transparent;
+        color: var(--text-color);
+        font-family: var(--mnt-font);
+        font-size: 12.5px;
+        font-weight: 600;
+        cursor: pointer;
+        border-radius: 5px;
+        text-align: left;
+        width: 100%;
+        box-sizing: border-box;
+        transition: background-color 0.1s ease;
+      }
+
+      .col-screen-header:hover {
+        background-color: var(--hover-bg);
+      }
+
+      .col-screen-back {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        color: var(--text-muted);
+        flex-shrink: 0;
       }
 
       .col-menu-desc {
         font-size: 11.5px;
         line-height: 1.42;
         color: var(--text-muted);
-        padding: 6px 10px 6px;
+        padding: 4px 10px 4px;
         white-space: normal;
         user-select: none;
+      }
+
+      .col-menu-spacer {
+        height: 8px;
+        flex-shrink: 0;
       }
 
       .col-menu-list {
@@ -967,9 +1071,7 @@
     let inlineRenameState = null; // { colId, keepEditorOpen }
     let activeViewColId = null;
     let activeEditColId = null;
-    let isStandaloneMenuOpen = false;
     let activeActionsColId = null;
-    let pinnedSubmenuRow = null;
 
     // Cache de todos os favoritos do navegador durante edição
     let allBrowserBookmarks = [];
@@ -993,9 +1095,6 @@
     const emojiPopover = document.createElement("div");
     emojiPopover.className = "col-emoji-popover";
 
-    const standaloneMenu = document.createElement("div");
-    standaloneMenu.className = "fluent-menu col-standalone-menu";
-
     const itemActionsMenu = document.createElement("div");
     itemActionsMenu.className = "fluent-menu col-item-actions-menu";
 
@@ -1009,13 +1108,12 @@
     shadow.appendChild(editorPanel);
     shadow.appendChild(floatingStyleBar);
     shadow.appendChild(emojiPopover);
-    shadow.appendChild(standaloneMenu);
     shadow.appendChild(itemActionsMenu);
     shadow.appendChild(dropIndicatorV);
     shadow.appendChild(dropIndicatorH);
 
     // Impede que cliques internos nestes painéis disparem o fechamento de fora
-    [viewCard, editorPanel, floatingStyleBar, emojiPopover, standaloneMenu, itemActionsMenu].forEach((el) => {
+    [viewCard, editorPanel, floatingStyleBar, emojiPopover, itemActionsMenu].forEach((el) => {
       el.addEventListener("click", (e) => e.stopPropagation());
       el.addEventListener("contextmenu", (e) => {
         e.preventDefault();
@@ -1038,7 +1136,6 @@
         inlineRenameState ||
         activeViewColId ||
         activeEditColId ||
-        isStandaloneMenuOpen ||
         activeActionsColId
       );
     }
@@ -1067,7 +1164,7 @@
     }
 
     function findPillElementOnBar(colId) {
-      return strip.querySelector(`.collection-pill[data-col-id="${colId}"]`);
+      return strip.querySelector(`[data-col-id="${colId}"]`);
     }
 
     function updateBarDimmingState() {
@@ -1093,10 +1190,6 @@
       itemActionsMenu.classList.remove("open");
       itemActionsMenu.textContent = "";
       shadow.querySelectorAll(".col-dots-btn.active").forEach((b) => b.classList.remove("active"));
-      if (pinnedSubmenuRow) {
-        pinnedSubmenuRow.classList.remove("open");
-        pinnedSubmenuRow = null;
-      }
     }
 
     function closeAllCollectionOverlays(options = {}) {
@@ -1128,7 +1221,6 @@
 
       activeViewColId = null;
       activeEditColId = null;
-      isStandaloneMenuOpen = false;
 
       viewCard.classList.remove("open");
       viewCard.textContent = "";
@@ -1136,8 +1228,6 @@
       editorPanel.textContent = "";
       floatingStyleBar.classList.remove("open");
       floatingStyleBar.textContent = "";
-      standaloneMenu.classList.remove("open");
-      standaloneMenu.textContent = "";
       closeEmojiPopover();
       closeItemActionsMenu();
 
@@ -1300,15 +1390,29 @@
       wrap.appendChild(colorSwatch);
       wrap.appendChild(emojiWrap);
 
-      return { wrap, syncEmojiVisual, colorSwatch, colorInput };
+      return { wrap, syncEmojiVisual, emojiBtn, colorSwatch, colorInput };
     }
 
     // ============================================================================
     // CRIAÇÃO INLINE NA BARRA (IMAGEM 1)
     // ============================================================================
-    function startCreatingCollection() {
+    function getActiveCreationEmoji() {
+      if (!creationState || creationState.emojiCleared) return "";
+      return creationState.emojiTouched ? creationState.emoji : creationState.previewEmoji;
+    }
+
+    function getPendingCreationUrls() {
+      if (!creationState || !Array.isArray(creationState.initialItems)) return [];
+      return creationState.initialItems.map((it) => it?.url).filter(Boolean);
+    }
+
+    function startCreatingCollection(options = {}) {
       closeHostMenus();
       closeAllCollectionOverlays({ commitPendingCreation: true, commitPendingRename: true, skipBarRender: true });
+
+      const initialItems = Array.isArray(options.initialItems)
+        ? options.initialItems.filter((it) => it && isSafeUrl(it.url))
+        : [];
 
       creationState = {
         name: "",
@@ -1318,9 +1422,13 @@
         colorTouched: false,
         emojiTouched: false,
         emojiCleared: false,
-        showStyleControls: false,
+        showStyleControls: true,
+        initialItems,
+        fromBookmarkMerge: Boolean(options.fromBookmarkMerge),
         inputEl: null,
-        triggerBtnEl: null
+        triggerBtnEl: null,
+        emojiSwatchBtnEl: null,
+        syncStyleControlsEmoji: null
       };
 
       reRenderBar();
@@ -1346,10 +1454,7 @@
 
       const controls = createStyleControlsElement({
         getColor: () => creationState.color,
-        getEmoji: () => {
-          if (creationState.emojiCleared) return "";
-          return creationState.emojiTouched ? creationState.emoji : creationState.previewEmoji;
-        },
+        getEmoji: getActiveCreationEmoji,
         onColorInput: (hex) => {
           if (!creationState) return;
           creationState.color = hex;
@@ -1375,6 +1480,9 @@
           }
         }
       });
+
+      creationState.emojiSwatchBtnEl = controls.emojiBtn;
+      creationState.syncStyleControlsEmoji = controls.syncEmojiVisual;
 
       floatingStyleBar.appendChild(controls.wrap);
 
@@ -1419,6 +1527,7 @@
       }
 
       const finalColor = isValidHexColor(creationState.color) ? creationState.color : pickRandomColor();
+      const initialItems = Array.isArray(creationState.initialItems) ? creationState.initialItems : [];
 
       const newCol = {
         id: generateCollectionId(),
@@ -1426,7 +1535,7 @@
         emoji: finalEmoji,
         color: finalColor,
         hidden: false,
-        items: []
+        items: initialItems
       };
 
       const nextCollections = [...getCollections(), newCol];
@@ -1455,7 +1564,7 @@
     }
 
     // ============================================================================
-    // RENOMEAÇÃO INLINE NA PRÓPRIA PÍLULA DA BARRA
+    // RENOMEAÇÃO INLINE NA PRÓPRIA BARRA (ESTILO CRIAÇÃO, SEM ABRIR EDITOR COMPLETO)
     // ============================================================================
     function startInlineRename(colId, options = {}) {
       const col = findCollection(colId);
@@ -1474,10 +1583,16 @@
       };
 
       reRenderBar();
+      if (keepEditorOpen) {
+        repositionEditorToPill(colId);
+      }
       notifyOverlayState();
 
       requestAnimationFrame(() => {
         if (inlineRenameState && inlineRenameState.inputEl) {
+          try {
+            inlineRenameState.inputEl.scrollIntoView({ block: "nearest", inline: "nearest" });
+          } catch (e) {}
           inlineRenameState.inputEl.focus();
           inlineRenameState.inputEl.select();
         }
@@ -1801,7 +1916,15 @@
     function addBookmarkToCollection(colId, bm, targetIndex) {
       const col = findCollection(colId);
       if (!col || !bm || !isSafeUrl(bm.url)) return;
-      if (col.items.some((it) => it.url === bm.url)) return;
+      const bmKey = normalizeUrlKey(bm.url);
+      if (col.items.some((it) => normalizeUrlKey(it.url) === bmKey)) return;
+
+      if (!getSettings()?.collectionsAllowDuplicateItems) {
+        const alreadyInAny = getCollections().some((c) =>
+          (c.items || []).some((it) => normalizeUrlKey(it?.url) === bmKey)
+        );
+        if (alreadyInAny) return;
+      }
 
       const nextItems = col.items.slice();
       const entry = {
@@ -1817,11 +1940,11 @@
       }
 
       const updated = getCollections().map((c) => (c.id === colId ? { ...c, items: nextItems } : c));
-      saveSetting({ collections: updated }, () => {
-        reRenderSettingsMenu();
-      });
+      saveSetting({ collections: updated });
+      reRenderBar();
 
       if (activeEditColId === colId) {
+        repositionEditorToPill(colId);
         renderEditorLists();
       }
     }
@@ -1831,11 +1954,11 @@
       if (!col) return;
       const nextItems = col.items.filter((_, idx) => idx !== itemIndex);
       const updated = getCollections().map((c) => (c.id === colId ? { ...c, items: nextItems } : c));
-      saveSetting({ collections: updated }, () => {
-        reRenderSettingsMenu();
-      });
+      saveSetting({ collections: updated });
+      reRenderBar();
 
       if (activeEditColId === colId) {
+        repositionEditorToPill(colId);
         renderEditorLists();
       } else if (activeViewColId === colId) {
         const refreshed = findCollection(colId);
@@ -1935,11 +2058,23 @@
       pickerList.textContent = "";
       paginationBar.textContent = "";
 
-      const existingUrls = new Set((col.items || []).map((it) => it.url));
+      const allowDuplicates = Boolean(getSettings()?.collectionsAllowDuplicateItems);
+      const existingUrls = new Set();
+      if (allowDuplicates) {
+        (col.items || []).forEach((it) => {
+          if (it?.url) existingUrls.add(normalizeUrlKey(it.url));
+        });
+      } else {
+        getCollections().forEach((c) => {
+          (c.items || []).forEach((it) => {
+            if (it?.url) existingUrls.add(normalizeUrlKey(it.url));
+          });
+        });
+      }
       const q = editorSearchQuery.trim().toLowerCase();
 
       const filtered = allBrowserBookmarks.filter((bm) => {
-        if (!bm || !isSafeUrl(bm.url) || existingUrls.has(bm.url)) return false;
+        if (!bm || !isSafeUrl(bm.url) || existingUrls.has(normalizeUrlKey(bm.url))) return false;
         if (!q) return true;
         const t = (bm.title || "").toLowerCase();
         const u = bm.url.toLowerCase();
@@ -1958,7 +2093,9 @@
           ? "Nenhum favorito encontrado"
           : allBrowserBookmarks.length === 0
             ? "Nenhum favorito salvo no navegador"
-            : "Todos os seus favoritos já estão nesta coleção";
+            : allowDuplicates
+              ? "Todos os seus favoritos já estão nesta coleção"
+              : "Todos os seus favoritos disponíveis já estão em coleções";
         pickerList.appendChild(empty);
         paginationBar.style.display = "none";
         return;
@@ -2087,20 +2224,204 @@
       return ghost;
     }
 
-    function cleanupActiveDrag() {
-      if (!activeDrag) return;
-      if (activeDrag.ghostEl) activeDrag.ghostEl.remove();
-      if (activeDrag.sourceEl) activeDrag.sourceEl.classList.remove("drag-source");
-      dropIndicatorV.style.display = "none";
-      dropIndicatorH.style.display = "none";
+    function findBarBookmarkNode(bookmarkId) {
+      return (getBookmarks() || []).find((n) => n && String(n.id) === String(bookmarkId)) || null;
+    }
+
+    function findCollectionPillAtPoint(clientX, clientY) {
+      const pills = strip.querySelectorAll(".collection-pill[data-col-id]");
+      for (const pill of pills) {
+        const r = pill.getBoundingClientRect();
+        if (
+          clientX >= r.left - 2 &&
+          clientX <= r.right + 2 &&
+          clientY >= r.top - 4 &&
+          clientY <= r.bottom + 6
+        ) {
+          return { pillEl: pill, colId: pill.getAttribute("data-col-id"), rect: r };
+        }
+      }
+      return null;
+    }
+
+    function clearDragHoverTimers(dragObj) {
+      if (!dragObj) return;
+      if (dragObj.pillHoverTimer) {
+        clearTimeout(dragObj.pillHoverTimer);
+        dragObj.pillHoverTimer = null;
+      }
+      dragObj.pendingHoverPillId = null;
+      clearMergeHoldTimers(dragObj);
+    }
+
+    function clearMergeHoldTimers(dragObj) {
+      if (!dragObj) return;
+      if (dragObj.mergeVisualTimer) {
+        clearTimeout(dragObj.mergeVisualTimer);
+        dragObj.mergeVisualTimer = null;
+      }
+      if (dragObj.mergeTriggerTimer) {
+        clearTimeout(dragObj.mergeTriggerTimer);
+        dragObj.mergeTriggerTimer = null;
+      }
+      dragObj.mergeHoldTargetId = null;
+      dragObj.mergeVisualActive = false;
+      strip.querySelectorAll(".item.merge-hold-target").forEach((el) => el.classList.remove("merge-hold-target"));
+    }
+
+    function clearDragTargetHighlights() {
+      strip.querySelectorAll(".collection-pill.drag-drop-target").forEach((el) => el.classList.remove("drag-drop-target"));
       const dropBox = editorPanel.querySelector(".col-dropzone-box");
       if (dropBox) dropBox.classList.remove("drag-over");
       const pickerBox = editorPanel.querySelector(".col-picker-box");
       if (pickerBox) pickerBox.classList.remove("drag-remove-over");
+    }
+
+    function cleanupActiveDrag() {
+      if (!activeDrag) return;
+      clearDragHoverTimers(activeDrag);
+      clearDragTargetHighlights();
+      if (activeDrag.ghostEl) activeDrag.ghostEl.remove();
+      if (activeDrag.sourceEl) activeDrag.sourceEl.classList.remove("drag-source");
+      dropIndicatorV.style.display = "none";
+      dropIndicatorH.style.display = "none";
       window.removeEventListener("pointermove", onGlobalPointerMove);
       window.removeEventListener("pointerup", onGlobalPointerUp);
       window.removeEventListener("pointercancel", onGlobalPointerCancel);
       activeDrag = null;
+    }
+
+    function triggerBookmarkMergeCreation(targetBookmarkId, draggedBookmarkId) {
+      const targetNode = findBarBookmarkNode(targetBookmarkId);
+      const draggedNode = findBarBookmarkNode(draggedBookmarkId);
+      if (!targetNode || !draggedNode || !isSafeUrl(targetNode.url) || !isSafeUrl(draggedNode.url)) {
+        cleanupActiveDrag();
+        return;
+      }
+
+      const initialItems = [
+        {
+          id: String(targetNode.id || `bm_${Date.now().toString(36)}_1`),
+          title: String(targetNode.title || targetNode.url).slice(0, 200),
+          url: targetNode.url
+        },
+        {
+          id: String(draggedNode.id || `bm_${Date.now().toString(36)}_2`),
+          title: String(draggedNode.title || draggedNode.url).slice(0, 200),
+          url: draggedNode.url
+        }
+      ];
+
+      suppressClickUntil = Date.now() + 700;
+      const onReleaseAfterHold = () => {
+        suppressClickUntil = Date.now() + 320;
+        requestAnimationFrame(() => {
+          if (creationState && creationState.inputEl) {
+            creationState.inputEl.focus();
+          }
+        });
+      };
+      window.addEventListener("pointerup", onReleaseAfterHold, { once: true });
+
+      cleanupActiveDrag();
+      startCreatingCollection({ initialItems, fromBookmarkMerge: true });
+    }
+
+    function moveItemBetweenCollections(fromColId, fromIndex, toColId, targetIndex) {
+      if (!fromColId || !toColId || fromColId === toColId) return;
+      const fromCol = findCollection(fromColId);
+      const toCol = findCollection(toColId);
+      if (!fromCol || !toCol) return;
+      const item = fromCol.items?.[fromIndex];
+      if (!item || !isSafeUrl(item.url)) return;
+
+      const nextFromItems = fromCol.items.filter((_, idx) => idx !== fromIndex);
+      const itemKey = normalizeUrlKey(item.url);
+      const alreadyInTarget = toCol.items.some((it) => normalizeUrlKey(it?.url) === itemKey);
+
+      const nextToItems = toCol.items.slice();
+      if (!alreadyInTarget) {
+        const entry = {
+          id: String(item.id || `bm_${Date.now().toString(36)}`),
+          title: String(item.title || item.url).slice(0, 200),
+          url: item.url
+        };
+        if (typeof targetIndex === "number" && targetIndex >= 0 && targetIndex <= nextToItems.length) {
+          nextToItems.splice(targetIndex, 0, entry);
+        } else {
+          nextToItems.push(entry);
+        }
+      }
+
+      const updated = getCollections().map((c) => {
+        if (c.id === fromColId) return { ...c, items: nextFromItems };
+        if (c.id === toColId) return { ...c, items: nextToItems };
+        return c;
+      });
+
+      saveSetting({ collections: updated }, () => {
+        reRenderSettingsMenu();
+      });
+      reRenderBar();
+
+      if (activeEditColId) {
+        repositionEditorToPill(activeEditColId);
+        renderEditorLists();
+      }
+    }
+
+    function removeCollectionItemToBarPosition(colId, itemIndex, targetBarIndex) {
+      const col = findCollection(colId);
+      if (!col) return;
+      const item = col.items?.[itemIndex];
+      if (!item) return;
+
+      const currentDomIds = Array.from(strip.querySelectorAll(".item[data-bookmark-id]")).map((el) =>
+        String(el.dataset.bookmarkId)
+      );
+
+      const nextItems = col.items.filter((_, idx) => idx !== itemIndex);
+      const nextCollections = getCollections().map((c) => (c.id === colId ? { ...c, items: nextItems } : c));
+
+      const allBarNodes = getBookmarks() || [];
+      const barNode =
+        allBarNodes.find((n) => n && n.url && String(n.id) === String(item.id)) ||
+        allBarNodes.find((n) => n && n.url && normalizeUrlKey(n.url) === normalizeUrlKey(item.url)) ||
+        null;
+
+      const settingsPatch = { collections: nextCollections };
+
+      if (barNode && barNode.id != null) {
+        const barNodeId = String(barNode.id);
+        const nextVisibleIds = currentDomIds.slice();
+        const existingDomIdx = nextVisibleIds.indexOf(barNodeId);
+        let adjTarget = typeof targetBarIndex === "number" ? targetBarIndex : nextVisibleIds.length;
+        if (existingDomIdx >= 0) {
+          nextVisibleIds.splice(existingDomIdx, 1);
+          if (adjTarget > existingDomIdx) adjTarget--;
+        }
+        const insertPos = Math.max(0, Math.min(nextVisibleIds.length, adjTarget));
+        nextVisibleIds.splice(insertPos, 0, barNodeId);
+
+        const nextVisibleSet = new Set(nextVisibleIds);
+        const allOrdered = sortBarBookmarks(allBarNodes, getSettings()?.barBookmarksOrder);
+        let visPtr = 0;
+        settingsPatch.barBookmarksOrder = allOrdered.map((n) => {
+          const id = String(n.id);
+          return nextVisibleSet.has(id) ? nextVisibleIds[visPtr++] : id;
+        });
+      }
+
+      saveSetting(settingsPatch);
+      reRenderBar();
+
+      if (activeEditColId === colId) {
+        repositionEditorToPill(colId);
+        renderEditorLists();
+      } else if (activeViewColId === colId) {
+        const refreshed = findCollection(colId);
+        if (refreshed) renderViewCardContent(refreshed);
+      }
     }
 
     function computeHorizontalInsertIndex(elements, clientX) {
@@ -2167,8 +2488,12 @@
       }
 
       // Auto-scroll horizontal na barra se necessário
-      if (activeDrag.kind === "bar-collection" || activeDrag.kind === "bar-bookmark") {
-        const stripRect = strip.getBoundingClientRect();
+      const stripRect = strip.getBoundingClientRect();
+      if (
+        activeDrag.kind === "bar-collection" ||
+        activeDrag.kind === "bar-bookmark" ||
+        (activeDrag.kind === "col-item-reorder" && activeDrag.allowRemoveToPicker && e.clientY <= stripRect.bottom + 10)
+      ) {
         if (e.clientX < stripRect.left + 28) strip.scrollLeft -= 8;
         else if (e.clientX > stripRect.right - 28) strip.scrollLeft += 8;
       }
@@ -2185,13 +2510,151 @@
       }
 
       if (activeDrag.kind === "bar-bookmark") {
+        activeDrag.dropTargetColId = null;
+        activeDrag.overCollectionDropzone = false;
+        activeDrag.targetColItemIndex = null;
+        dropIndicatorV.style.display = "none";
+        dropIndicatorH.style.display = "none";
+        clearDragTargetHighlights();
+
+        const draggedNode = findBarBookmarkNode(activeDrag.bookmarkId);
+        const isUrlBookmark = Boolean(draggedNode && draggedNode.url && isSafeUrl(draggedNode.url));
+
+        // 1) Se um editor de coleção estiver aberto e o usuário arrastar para a caixa de itens da coleção
+        if (isUrlBookmark && activeEditColId) {
+          const dropBox = editorPanel.querySelector(".col-dropzone-box");
+          if (dropBox) {
+            const boxRect = dropBox.getBoundingClientRect();
+            const insideDropBox =
+              e.clientX >= boxRect.left - 14 &&
+              e.clientX <= boxRect.right + 14 &&
+              e.clientY >= boxRect.top - 10 &&
+              e.clientY <= boxRect.bottom + 14;
+
+            if (insideDropBox) {
+              clearDragHoverTimers(activeDrag);
+              dropBox.classList.add("drag-over");
+              activeDrag.overCollectionDropzone = true;
+              activeDrag.dropTargetColId = activeEditColId;
+              const rows = Array.from(dropBox.querySelectorAll(".col-drop-item-row"));
+              const hit = computeVerticalInsertIndex(rows, boxRect, e.clientY);
+              activeDrag.targetColItemIndex = hit.index;
+              if (rows.length > 0) {
+                dropIndicatorH.style.left = `${hit.indicatorX}px`;
+                dropIndicatorH.style.top = `${hit.indicatorY}px`;
+                dropIndicatorH.style.width = `${hit.indicatorWidth}px`;
+                dropIndicatorH.style.display = "block";
+              }
+              return;
+            }
+          }
+        }
+
+        // 2) Se arrastar por cima de uma coleção na barra: abre o editor dela para permitir soltar no rótulo ou definir a ordem
+        if (isUrlBookmark) {
+          const pillHit = findCollectionPillAtPoint(e.clientX, e.clientY);
+          if (pillHit && pillHit.colId) {
+            clearMergeHoldTimers(activeDrag);
+            pillHit.pillEl.classList.add("drag-drop-target");
+            activeDrag.dropTargetColId = pillHit.colId;
+
+            if (activeEditColId !== pillHit.colId && activeDrag.pendingHoverPillId !== pillHit.colId) {
+              if (activeDrag.pillHoverTimer) {
+                clearTimeout(activeDrag.pillHoverTimer);
+              }
+              const hoveredColId = pillHit.colId;
+              activeDrag.pendingHoverPillId = hoveredColId;
+              activeDrag.pillHoverTimer = setTimeout(() => {
+                if (!activeDrag || activeDrag.kind !== "bar-bookmark") return;
+                activeDrag.pillHoverTimer = null;
+                activeDrag.pendingHoverPillId = null;
+                if (activeDrag.initialEditColId === null) {
+                  activeDrag.autoOpenedEditor = true;
+                }
+                openCollectionEditor(hoveredColId);
+              }, 140);
+            }
+            return;
+          }
+        }
+
+        if (activeDrag.pillHoverTimer) {
+          clearTimeout(activeDrag.pillHoverTimer);
+          activeDrag.pillHoverTimer = null;
+          activeDrag.pendingHoverPillId = null;
+        }
+
+        // 3) Reordenação normal na barra + detecção cuidadosa de segurar sobre outro favorito para criar coleção
         const items = Array.from(strip.querySelectorAll(".item[data-bookmark-id]"));
-        if (items.length === 0) return;
+        if (items.length === 0) {
+          clearMergeHoldTimers(activeDrag);
+          return;
+        }
+
         const hit = computeHorizontalInsertIndex(items, e.clientX);
         activeDrag.targetIndex = hit.index;
-        dropIndicatorV.style.left = `${hit.indicatorX}px`;
-        dropIndicatorV.style.top = `${hit.indicatorY}px`;
-        dropIndicatorV.style.display = "block";
+
+        // Verifica se está segurando parado exatamente no miolo central de outro favorito de URL (sem conflitar com as bordas de reordenação)
+        let centerHoldCandidate = null;
+        if (isUrlBookmark && !activeEditColId) {
+          for (const itemEl of items) {
+            const targetId = itemEl.dataset.bookmarkId;
+            if (!targetId || targetId === activeDrag.bookmarkId) continue;
+            const targetNode = findBarBookmarkNode(targetId);
+            if (!targetNode || !targetNode.url || !isSafeUrl(targetNode.url)) continue;
+
+            const r = itemEl.getBoundingClientRect();
+            const edgeMargin = Math.min(14, Math.max(5, r.width * 0.22));
+            if (
+              e.clientY >= r.top - 3 &&
+              e.clientY <= r.bottom + 3 &&
+              e.clientX >= r.left + edgeMargin &&
+              e.clientX <= r.right - edgeMargin
+            ) {
+              centerHoldCandidate = { itemEl, targetId };
+              break;
+            }
+          }
+        }
+
+        if (centerHoldCandidate) {
+          const movedTooMuch =
+            activeDrag.mergeHoldTargetId !== centerHoldCandidate.targetId ||
+            Math.hypot(e.clientX - (activeDrag.holdAnchorX || 0), e.clientY - (activeDrag.holdAnchorY || 0)) > 7;
+
+          if (movedTooMuch) {
+            clearMergeHoldTimers(activeDrag);
+            activeDrag.mergeHoldTargetId = centerHoldCandidate.targetId;
+            activeDrag.holdAnchorX = e.clientX;
+            activeDrag.holdAnchorY = e.clientY;
+
+            const holdTargetEl = centerHoldCandidate.itemEl;
+            const holdTargetId = centerHoldCandidate.targetId;
+            const draggedId = activeDrag.bookmarkId;
+
+            activeDrag.mergeVisualTimer = setTimeout(() => {
+              if (!activeDrag || activeDrag.mergeHoldTargetId !== holdTargetId) return;
+              activeDrag.mergeVisualActive = true;
+              holdTargetEl.classList.add("merge-hold-target");
+              dropIndicatorV.style.display = "none";
+            }, 320);
+
+            activeDrag.mergeTriggerTimer = setTimeout(() => {
+              if (!activeDrag || activeDrag.mergeHoldTargetId !== holdTargetId) return;
+              triggerBookmarkMergeCreation(holdTargetId, draggedId);
+            }, 1150);
+          } else if (activeDrag.mergeVisualActive) {
+            centerHoldCandidate.itemEl.classList.add("merge-hold-target");
+          }
+        } else {
+          clearMergeHoldTimers(activeDrag);
+        }
+
+        if (!activeDrag.mergeVisualActive) {
+          dropIndicatorV.style.left = `${hit.indicatorX}px`;
+          dropIndicatorV.style.top = `${hit.indicatorY}px`;
+          dropIndicatorV.style.display = "block";
+        }
         return;
       }
 
@@ -2227,11 +2690,76 @@
       }
 
       if (activeDrag.kind === "col-item-reorder") {
-        const containerEl = activeDrag.containerEl;
-        if (!containerEl) return;
+        activeDrag.overRemoveZone = false;
+        activeDrag.dropTargetColId = null;
+        activeDrag.overBarBookmarks = false;
+        activeDrag.targetBarIndex = null;
+        activeDrag.targetIndex = null;
+        dropIndicatorV.style.display = "none";
+        dropIndicatorH.style.display = "none";
+        clearDragTargetHighlights();
 
-        // Se estiver no editor e arrastar de volta para a caixa de todos os favoritos, marca remoção
+        // No modo editor, permite arrastar o favorito direto para outra coleção na barra ou para uma posição nos favoritos da barra
         if (activeDrag.allowRemoveToPicker) {
+          const onTopBar = e.clientY >= stripRect.top - 6 && e.clientY <= stripRect.bottom + 8;
+          if (onTopBar) {
+            const pillHit = findCollectionPillAtPoint(e.clientX, e.clientY);
+            if (pillHit && pillHit.colId) {
+              if (pillHit.colId !== activeDrag.colId) {
+                pillHit.pillEl.classList.add("drag-drop-target");
+                activeDrag.dropTargetColId = pillHit.colId;
+
+                if (activeEditColId !== pillHit.colId && activeDrag.pendingHoverPillId !== pillHit.colId) {
+                  if (activeDrag.pillHoverTimer) {
+                    clearTimeout(activeDrag.pillHoverTimer);
+                  }
+                  const targetColId = pillHit.colId;
+                  activeDrag.pendingHoverPillId = targetColId;
+                  activeDrag.pillHoverTimer = setTimeout(() => {
+                    if (!activeDrag || activeDrag.kind !== "col-item-reorder") return;
+                    activeDrag.pillHoverTimer = null;
+                    activeDrag.pendingHoverPillId = null;
+                    openCollectionEditor(targetColId);
+                  }, 420);
+                }
+              }
+              return;
+            }
+
+            if (activeDrag.pillHoverTimer) {
+              clearTimeout(activeDrag.pillHoverTimer);
+              activeDrag.pillHoverTimer = null;
+              activeDrag.pendingHoverPillId = null;
+            }
+
+            const pills = Array.from(strip.querySelectorAll(".collection-pill"));
+            const collectionsRightEdge =
+              pills.length > 0 ? pills[pills.length - 1].getBoundingClientRect().right : stripRect.left;
+
+            if (e.clientX >= collectionsRightEdge - 2) {
+              activeDrag.overBarBookmarks = true;
+              const barItems = Array.from(strip.querySelectorAll(".item[data-bookmark-id]"));
+              if (barItems.length > 0) {
+                const hit = computeHorizontalInsertIndex(barItems, e.clientX);
+                activeDrag.targetBarIndex = hit.index;
+                dropIndicatorV.style.left = `${hit.indicatorX}px`;
+                dropIndicatorV.style.top = `${hit.indicatorY}px`;
+                dropIndicatorV.style.display = "block";
+              } else {
+                activeDrag.targetBarIndex = 0;
+                dropIndicatorV.style.left = `${Math.max(stripRect.left + 8, collectionsRightEdge + 8)}px`;
+                dropIndicatorV.style.top = `${stripRect.top + (stripRect.height - 20) / 2}px`;
+                dropIndicatorV.style.display = "block";
+              }
+              return;
+            }
+          } else if (activeDrag.pillHoverTimer) {
+            clearTimeout(activeDrag.pillHoverTimer);
+            activeDrag.pillHoverTimer = null;
+            activeDrag.pendingHoverPillId = null;
+          }
+
+          // Caixa inferior ("Pesquise nos favoritos") remove da coleção
           const pickerBox = editorPanel.querySelector(".col-picker-box");
           if (pickerBox) {
             const pRect = pickerBox.getBoundingClientRect();
@@ -2240,18 +2768,54 @@
               e.clientX <= pRect.right &&
               e.clientY >= pRect.top &&
               e.clientY <= pRect.bottom;
-            activeDrag.overRemoveZone = overPicker;
             if (overPicker) {
+              activeDrag.overRemoveZone = true;
               pickerBox.classList.add("drag-remove-over");
-              dropIndicatorH.style.display = "none";
               return;
-            } else {
-              pickerBox.classList.remove("drag-remove-over");
             }
+          }
+
+          // Se o editor aberto mudou para outra coleção durante o arraste, permite escolher a posição dentro da outra coleção
+          if (activeEditColId && activeEditColId !== activeDrag.colId) {
+            const otherDropBox = editorPanel.querySelector(".col-dropzone-box");
+            if (otherDropBox) {
+              const boxRect = otherDropBox.getBoundingClientRect();
+              const insideOther =
+                e.clientX >= boxRect.left - 14 &&
+                e.clientX <= boxRect.right + 14 &&
+                e.clientY >= boxRect.top - 10 &&
+                e.clientY <= boxRect.bottom + 14;
+              if (insideOther) {
+                otherDropBox.classList.add("drag-over");
+                activeDrag.dropTargetColId = activeEditColId;
+                const rows = Array.from(otherDropBox.querySelectorAll(".col-drop-item-row"));
+                const hit = computeVerticalInsertIndex(rows, boxRect, e.clientY);
+                activeDrag.targetIndex = hit.index;
+                if (rows.length > 0) {
+                  dropIndicatorH.style.left = `${hit.indicatorX}px`;
+                  dropIndicatorH.style.top = `${hit.indicatorY}px`;
+                  dropIndicatorH.style.width = `${hit.indicatorWidth}px`;
+                  dropIndicatorH.style.display = "block";
+                }
+              }
+            }
+            return;
           }
         }
 
+        const containerEl = activeDrag.allowRemoveToPicker
+          ? editorPanel.querySelector(".col-dropzone-box")
+          : activeDrag.containerEl;
+        if (!containerEl) return;
+
         const cRect = containerEl.getBoundingClientRect();
+        const insideContainer =
+          e.clientX >= cRect.left - 16 &&
+          e.clientX <= cRect.right + 16 &&
+          e.clientY >= cRect.top - 12 &&
+          e.clientY <= cRect.bottom + 12;
+        if (!insideContainer) return;
+
         if (e.clientY < cRect.top + 20) containerEl.scrollTop -= 6;
         else if (e.clientY > cRect.bottom - 20) containerEl.scrollTop += 6;
 
@@ -2280,8 +2844,29 @@
         return;
       }
 
-      if (drag.kind === "bar-bookmark" && typeof drag.targetIndex === "number") {
-        reorderBarBookmarkItem(drag.bookmarkId, drag.targetIndex);
+      if (drag.kind === "bar-bookmark") {
+        if (drag.dropTargetColId) {
+          const bmNode = findBarBookmarkNode(drag.bookmarkId);
+          if (bmNode && bmNode.url && isSafeUrl(bmNode.url)) {
+            if (activeEditColId !== drag.dropTargetColId) {
+              openCollectionEditor(drag.dropTargetColId);
+            }
+            addBookmarkToCollection(
+              drag.dropTargetColId,
+              { id: bmNode.id, title: bmNode.title, url: bmNode.url },
+              drag.overCollectionDropzone ? drag.targetColItemIndex : undefined
+            );
+          }
+          return;
+        }
+
+        if (drag.autoOpenedEditor) {
+          closeAllCollectionOverlays();
+        }
+
+        if (typeof drag.targetIndex === "number") {
+          reorderBarBookmarkItem(drag.bookmarkId, drag.targetIndex);
+        }
         return;
       }
 
@@ -2291,7 +2876,11 @@
       }
 
       if (drag.kind === "col-item-reorder") {
-        if (drag.overRemoveZone) {
+        if (drag.dropTargetColId && drag.dropTargetColId !== drag.colId) {
+          moveItemBetweenCollections(drag.colId, drag.fromIndex, drag.dropTargetColId, drag.targetIndex);
+        } else if (drag.overBarBookmarks) {
+          removeCollectionItemToBarPosition(drag.colId, drag.fromIndex, drag.targetBarIndex);
+        } else if (drag.overRemoveZone) {
           removeBookmarkFromCollection(drag.colId, drag.fromIndex);
         } else if (typeof drag.targetIndex === "number") {
           reorderCollectionItems(drag.colId, drag.fromIndex, drag.targetIndex);
@@ -2300,7 +2889,11 @@
     }
 
     function onGlobalPointerCancel() {
+      const hadAutoEditor = activeDrag?.autoOpenedEditor;
       cleanupActiveDrag();
+      if (hadAutoEditor) {
+        closeAllCollectionOverlays();
+      }
     }
 
     function startPointerDragSession(config, e) {
@@ -2313,8 +2906,23 @@
         started: false,
         ghostEl: null,
         targetIndex: null,
+        targetBarIndex: null,
+        targetColItemIndex: null,
+        dropTargetColId: null,
         overDropzone: false,
-        overRemoveZone: false
+        overCollectionDropzone: false,
+        overRemoveZone: false,
+        overBarBookmarks: false,
+        initialEditColId: activeEditColId,
+        autoOpenedEditor: false,
+        pillHoverTimer: null,
+        pendingHoverPillId: null,
+        mergeVisualTimer: null,
+        mergeTriggerTimer: null,
+        mergeHoldTargetId: null,
+        mergeVisualActive: false,
+        holdAnchorX: 0,
+        holdAnchorY: 0
       };
       window.addEventListener("pointermove", onGlobalPointerMove, { passive: false });
       window.addEventListener("pointerup", onGlobalPointerUp);
@@ -2448,18 +3056,28 @@
     }
 
     function reorderBarBookmarkItem(bookmarkId, targetIndex) {
-      const currentOrdered = sortBarBookmarks(getBookmarks(), getSettings()?.barBookmarksOrder);
-      const ids = currentOrdered.map((n) => String(n.id));
-      const fromIndex = ids.indexOf(String(bookmarkId));
+      const settings = getSettings();
+      const allOrdered = sortBarBookmarks(getBookmarks(), settings?.barBookmarksOrder);
+      const visibleList = getVisibleBarBookmarks(getBookmarks(), settings);
+      const visibleIds = visibleList.map((n) => String(n.id));
+      const visibleSet = new Set(visibleIds);
+
+      const fromIndex = visibleIds.indexOf(String(bookmarkId));
       if (fromIndex < 0) return;
 
-      const [moved] = ids.splice(fromIndex, 1);
+      const [moved] = visibleIds.splice(fromIndex, 1);
       const adjusted = targetIndex > fromIndex ? targetIndex - 1 : targetIndex;
-      const clamped = Math.max(0, Math.min(ids.length, adjusted));
+      const clamped = Math.max(0, Math.min(visibleIds.length, adjusted));
       if (clamped === fromIndex) return;
-      ids.splice(clamped, 0, moved);
+      visibleIds.splice(clamped, 0, moved);
 
-      saveSetting({ barBookmarksOrder: ids });
+      let visPtr = 0;
+      const mergedIds = allOrdered.map((n) => {
+        const id = String(n.id);
+        return visibleSet.has(id) ? visibleIds[visPtr++] : id;
+      });
+
+      saveSetting({ barBookmarksOrder: mergedIds });
       reRenderBar();
     }
 
@@ -2481,31 +3099,7 @@
         pill.appendChild(emojiSpan);
       }
 
-      if (interactiveOnBar && inlineRenameState && inlineRenameState.colId === col.id) {
-        const input = document.createElement("input");
-        input.type = "text";
-        input.className = "collection-pill-inline-input";
-        input.value = col.name || "";
-        input.placeholder = "Nome...";
-        input.maxLength = 60;
-        inlineRenameState.inputEl = input;
-
-        input.addEventListener("click", (e) => e.stopPropagation());
-        input.addEventListener("keydown", (e) => {
-          e.stopPropagation();
-          if (e.key === "Enter") {
-            e.preventDefault();
-            commitInlineRename();
-          } else if (e.key === "Escape") {
-            e.preventDefault();
-            inlineRenameState = null;
-            reRenderBar();
-            notifyOverlayState();
-          }
-        });
-
-        pill.appendChild(input);
-      } else if (col.name) {
+      if (col.name) {
         const nameSpan = document.createElement("span");
         nameSpan.className = "collection-pill-name";
         nameSpan.textContent = col.name;
@@ -2521,10 +3115,56 @@
     }
 
     function renderBarCollections(stripEl, hasBookmarksAfter) {
-      const visibleCollections = getCollections().filter((c) => !c.hidden);
+      const visibleCollections = getCollections().filter(
+        (c) => !c.hidden || (inlineRenameState && inlineRenameState.colId === c.id)
+      );
       const highlightedId = activeViewColId || activeEditColId;
 
       visibleCollections.forEach((col) => {
+        // Campo de renomeação igual ao de criar nova coleção (sem abrir interface completa)
+        if (inlineRenameState && inlineRenameState.colId === col.id) {
+          const renamePill = document.createElement("div");
+          renamePill.className = "collection-create-pill";
+          renamePill.dataset.colId = col.id;
+          renamePill.addEventListener("click", (e) => e.stopPropagation());
+
+          if (col.emoji) {
+            const emojiSpan = document.createElement("span");
+            emojiSpan.className = "collection-pill-emoji";
+            emojiSpan.textContent = col.emoji;
+            renamePill.appendChild(emojiSpan);
+          }
+
+          const renameInput = document.createElement("input");
+          renameInput.type = "text";
+          renameInput.className = "create-name-input";
+          renameInput.value = col.name || "";
+          renameInput.placeholder = "Minha coleção...";
+          renameInput.maxLength = 60;
+          inlineRenameState.inputEl = renameInput;
+
+          renameInput.addEventListener("click", (e) => e.stopPropagation());
+          renameInput.addEventListener("keydown", (e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitInlineRename();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              inlineRenameState = null;
+              reRenderBar();
+              if (activeEditColId === col.id) {
+                repositionEditorToPill(col.id);
+              }
+              notifyOverlayState();
+            }
+          });
+
+          renamePill.appendChild(renameInput);
+          stripEl.appendChild(renamePill);
+          return;
+        }
+
         const pill = createCollectionPillVisual(col, { interactiveOnBar: true });
         pill.setAttribute("role", "button");
         pill.tabIndex = 0;
@@ -2536,7 +3176,6 @@
         pill.addEventListener("click", (e) => {
           e.stopPropagation();
           if (Date.now() < suppressClickUntil) return;
-          if (inlineRenameState && inlineRenameState.colId === col.id) return;
           openCollectionView(col.id);
         });
 
@@ -2560,7 +3199,7 @@
         stripEl.appendChild(pill);
       });
 
-      // Espaço de criação inline quando ativo (Imagem 1)
+      // Espaço de criação inline quando ativo (com cor e emoji já exibidos abaixo)
       if (creationState) {
         const createPill = document.createElement("div");
         createPill.className = "collection-create-pill";
@@ -2569,15 +3208,28 @@
         const triggerBtn = document.createElement("button");
         triggerBtn.type = "button";
         triggerBtn.className = "create-emoji-trigger";
-        triggerBtn.title = "Definir cor e emoji";
-        triggerBtn.textContent =
-          creationState.emojiTouched && creationState.emoji ? creationState.emoji : "[+]";
+        triggerBtn.title = "Escolher emoji";
+        const currentCreationEmoji = getActiveCreationEmoji();
+        triggerBtn.textContent = currentCreationEmoji || "[+]";
 
         triggerBtn.addEventListener("click", (e) => {
           e.stopPropagation();
           if (!creationState) return;
-          creationState.showStyleControls = !creationState.showStyleControls;
-          renderFloatingCreationControls();
+          if (!creationState.showStyleControls) {
+            creationState.showStyleControls = true;
+            renderFloatingCreationControls();
+          }
+          const anchor = creationState.emojiSwatchBtnEl || triggerBtn;
+          openEmojiPopover(anchor, (chosenEmoji) => {
+            if (!creationState) return;
+            creationState.emoji = chosenEmoji;
+            creationState.emojiTouched = true;
+            creationState.emojiCleared = false;
+            triggerBtn.textContent = chosenEmoji;
+            if (typeof creationState.syncStyleControlsEmoji === "function") {
+              creationState.syncStyleControlsEmoji();
+            }
+          });
         });
 
         const nameInput = document.createElement("input");
@@ -2597,7 +3249,11 @@
           e.stopPropagation();
           if (e.key === "Enter") {
             e.preventDefault();
-            finalizeCreation({ openEditorAfter: true, allowEmptyCancel: false });
+            const isFromMerge = Boolean(creationState.fromBookmarkMerge);
+            finalizeCreation({
+              openEditorAfter: !isFromMerge,
+              allowEmptyCancel: isFromMerge
+            });
           } else if (e.key === "Escape") {
             e.preventDefault();
             creationState = null;
@@ -2629,9 +3285,9 @@
     }
 
     // ============================================================================
-    // MENU DE COLEÇÕES (SUBMENU EM MAIS OPÇÕES & MENU AVULSO DO BOTÃO DIREITO)
+    // TELA DE COLEÇÕES NOS AJUSTES (SEGUINDO O PADRÃO DO MENU MY NEW TAB)
     // ============================================================================
-    function openItemActionsDropdown(anchorBtn, col, refreshMenuContentFn, parentSubmenuRow) {
+    function openItemActionsDropdown(anchorBtn, col, refreshMenuContentFn) {
       if (activeActionsColId === col.id && itemActionsMenu.classList.contains("open")) {
         closeItemActionsMenu();
         return;
@@ -2640,11 +3296,6 @@
       closeItemActionsMenu();
       activeActionsColId = col.id;
       anchorBtn.classList.add("active");
-
-      if (parentSubmenuRow) {
-        pinnedSubmenuRow = parentSubmenuRow;
-        pinnedSubmenuRow.classList.add("open");
-      }
 
       // Opção 1: Editar
       const editBtn = document.createElement("button");
@@ -2655,12 +3306,22 @@
         e.stopPropagation();
         closeItemActionsMenu();
         closeHostMenus();
-        standaloneMenu.classList.remove("open");
-        isStandaloneMenuOpen = false;
         openCollectionEditor(col.id);
       });
 
-      // Opção 2: Ocultar / Mostrar
+      // Opção 2: Renomear (abre apenas o campo inline de nome na barra)
+      const renameBtn = document.createElement("button");
+      renameBtn.type = "button";
+      renameBtn.className = "menu-row";
+      renameBtn.textContent = "Renomear";
+      renameBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeItemActionsMenu();
+        closeHostMenus();
+        startInlineRename(col.id, { keepEditorOpen: false });
+      });
+
+      // Opção 3: Ocultar / Mostrar
       const toggleHideBtn = document.createElement("button");
       toggleHideBtn.type = "button";
       toggleHideBtn.className = "menu-row";
@@ -2682,7 +3343,7 @@
         });
       });
 
-      // Opção 3: Apagar (em vermelho com confirmação no próprio botão)
+      // Opção 4: Apagar (em vermelho com confirmação no próprio botão)
       let armedDelete = false;
       const deleteBtn = document.createElement("button");
       deleteBtn.type = "button";
@@ -2711,12 +3372,13 @@
       });
 
       itemActionsMenu.appendChild(editBtn);
+      itemActionsMenu.appendChild(renameBtn);
       itemActionsMenu.appendChild(toggleHideBtn);
       itemActionsMenu.appendChild(deleteBtn);
 
       const rect = anchorBtn.getBoundingClientRect();
       const menuW = 176;
-      const menuH = 106;
+      const menuH = 136;
       let left = rect.right - menuW;
       if (left < 8) left = rect.left;
       left = Math.min(left, window.innerWidth - menuW - 8);
@@ -2731,19 +3393,50 @@
       itemActionsMenu.classList.add("open");
     }
 
-    function renderCollectionsMenuContent(containerEl, parentSubmenuRow = null) {
-      containerEl.textContent = "";
+    function renderCollectionsScreenInSettings(checkIconSvg = "") {
+      const containerEl = deps.settingsMenu;
+      if (!containerEl) return;
 
+      closeItemActionsMenu();
+      containerEl.textContent = "";
+      containerEl.classList.add("collections-screen");
+
+      // 1. Cabeçalho: < Coleções
+      const headerBtn = document.createElement("button");
+      headerBtn.type = "button";
+      headerBtn.className = "col-screen-header";
+      headerBtn.title = "Voltar para Mais opções";
+
+      const backIcon = document.createElement("span");
+      backIcon.className = "col-screen-back";
+      backIcon.innerHTML = COL_ICONS.chevronLeft;
+
+      const headerTitle = document.createElement("span");
+      headerTitle.textContent = "Coleções";
+
+      headerBtn.appendChild(backIcon);
+      headerBtn.appendChild(headerTitle);
+      headerBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeItemActionsMenu();
+        containerEl.classList.remove("collections-screen");
+        reRenderSettingsMenu();
+      });
+      containerEl.appendChild(headerBtn);
+
+      // 2. Texto explicativo
       const desc = document.createElement("div");
       desc.className = "col-menu-desc";
       desc.textContent =
         "Organize sua barra de favoritos com coleções. Adicione os sites salvos nos seus favoritos, escolha um nome, cor e emoji. As coleções ficam salvas apenas no My New Tab e não interferem nos favoritos do navegador.";
       containerEl.appendChild(desc);
 
-      const divTop = document.createElement("div");
-      divTop.className = "menu-divider";
-      containerEl.appendChild(divTop);
+      // 3. Espaço em branco separador (sem linha)
+      const spacer = document.createElement("div");
+      spacer.className = "col-menu-spacer";
+      containerEl.appendChild(spacer);
 
+      // 4. Coleções criadas
       const cols = getCollections();
       if (cols.length > 0) {
         const listEl = document.createElement("div");
@@ -2759,8 +3452,6 @@
             e.stopPropagation();
             closeItemActionsMenu();
             closeHostMenus();
-            standaloneMenu.classList.remove("open");
-            isStandaloneMenuOpen = false;
             openCollectionEditor(col.id);
           });
 
@@ -2771,12 +3462,7 @@
           dotsBtn.innerHTML = COL_ICONS.dots;
           dotsBtn.addEventListener("click", (e) => {
             e.stopPropagation();
-            openItemActionsDropdown(
-              dotsBtn,
-              col,
-              () => renderCollectionsMenuContent(containerEl, parentSubmenuRow),
-              parentSubmenuRow
-            );
+            openItemActionsDropdown(dotsBtn, col, () => renderCollectionsScreenInSettings(checkIconSvg));
           });
 
           row.appendChild(pillPreview);
@@ -2785,12 +3471,9 @@
         });
 
         containerEl.appendChild(listEl);
-
-        const divBottom = document.createElement("div");
-        divBottom.className = "menu-divider";
-        containerEl.appendChild(divBottom);
       }
 
+      // 5. + Criar coleção
       const createBtn = document.createElement("button");
       createBtn.type = "button";
       createBtn.className = "menu-row";
@@ -2813,64 +3496,98 @@
         e.stopPropagation();
         closeItemActionsMenu();
         closeHostMenus();
-        standaloneMenu.classList.remove("open");
-        isStandaloneMenuOpen = false;
         startCreatingCollection();
       });
 
       containerEl.appendChild(createBtn);
+
+      // 6. Divisor horizontal
+      const divBottom = document.createElement("div");
+      divBottom.className = "menu-divider";
+      containerEl.appendChild(divBottom);
+
+      // 7. Opções de comportamento das coleções (desmarcadas por padrão)
+      const settings = getSettings() || {};
+
+      const showOnBarBtn = document.createElement("button");
+      showOnBarBtn.type = "button";
+      showOnBarBtn.className = "menu-row";
+      showOnBarBtn.innerHTML = `
+        <div class="menu-row-left">
+          <span class="check-slot">${settings.collectionsShowAddedOnBar ? checkIconSvg : ""}</span>
+          <span>Mostrar favorito adicionado na barra</span>
+        </div>
+      `;
+      showOnBarBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const nextVal = !Boolean(getSettings()?.collectionsShowAddedOnBar);
+        saveSetting({ collectionsShowAddedOnBar: nextVal }, () => {
+          reRenderBar();
+          renderCollectionsScreenInSettings(checkIconSvg);
+        });
+      });
+
+      const allowDupBtn = document.createElement("button");
+      allowDupBtn.type = "button";
+      allowDupBtn.className = "menu-row";
+      allowDupBtn.innerHTML = `
+        <div class="menu-row-left">
+          <span class="check-slot">${settings.collectionsAllowDuplicateItems ? checkIconSvg : ""}</span>
+          <span>Adicionar o mesmo favorito em várias coleções</span>
+        </div>
+      `;
+      allowDupBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const nextVal = !Boolean(getSettings()?.collectionsAllowDuplicateItems);
+        saveSetting({ collectionsAllowDuplicateItems: nextVal }, () => {
+          renderCollectionsScreenInSettings(checkIconSvg);
+        });
+      });
+
+      containerEl.appendChild(showOnBarBtn);
+      containerEl.appendChild(allowDupBtn);
     }
 
-    function createSettingsSubmenuRow(chevronSvg) {
-      const row = document.createElement("div");
-      row.className = "menu-row has-submenu";
+    function createSettingsCollectionsRow(checkIconSvg) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "menu-row";
 
       const left = document.createElement("div");
       left.className = "menu-row-left";
 
       const slot = document.createElement("span");
       slot.className = "check-slot";
+      slot.innerHTML = COL_ICONS.collections;
 
       const label = document.createElement("span");
       label.textContent = "Coleções";
 
       left.appendChild(slot);
       left.appendChild(label);
-      row.appendChild(left);
+      btn.appendChild(left);
 
-      const arrowWrap = document.createElement("span");
-      arrowWrap.style.display = "inline-flex";
-      arrowWrap.innerHTML = chevronSvg;
-      row.appendChild(arrowWrap);
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        renderCollectionsScreenInSettings(checkIconSvg);
+      });
 
-      const submenu = document.createElement("div");
-      submenu.className = "submenu collections-submenu";
-      renderCollectionsMenuContent(submenu, row);
-
-      row.appendChild(submenu);
-      return row;
+      return btn;
     }
 
-    function openStandaloneCollectionsMenu(clientX, clientY) {
+    function openCollectionsSettingsScreen(checkIconSvg) {
       closeHostMenus();
       closeAllCollectionOverlays({ commitPendingCreation: true, commitPendingRename: true, skipBarRender: true });
-
-      renderCollectionsMenuContent(standaloneMenu, null);
-      const menuW = 286;
-      const left = Math.max(8, Math.min(clientX, window.innerWidth - menuW - 8));
-      const top = Math.max(35, Math.min(clientY, window.innerHeight - 280));
-
-      standaloneMenu.style.left = `${left}px`;
-      standaloneMenu.style.top = `${top}px`;
-      standaloneMenu.classList.add("open");
-      isStandaloneMenuOpen = true;
-      notifyOverlayState();
+      if (typeof deps.openSettingsPanel === "function") {
+        deps.openSettingsPanel();
+      }
+      renderCollectionsScreenInSettings(checkIconSvg);
     }
 
     // ============================================================================
     // MENUS DE CONTEXTO (BOTÃO DIREITO NA BARRA VS BOTÃO DIREITO NA COLEÇÃO)
     // ============================================================================
-    function createBarContextMenuItems(anchorX) {
+    function createBarContextMenuItems(checkIconSvg) {
       const createRow = document.createElement("button");
       createRow.type = "button";
       createRow.className = "menu-row";
@@ -2897,13 +3614,13 @@
       `;
       menuRow.addEventListener("click", (e) => {
         e.stopPropagation();
-        openStandaloneCollectionsMenu(anchorX, 35);
+        openCollectionsSettingsScreen(checkIconSvg);
       });
 
       return [createRow, menuRow];
     }
 
-    function renderCollectionContextMenu(contextMenuEl, col, clientX) {
+    function renderCollectionContextMenu(contextMenuEl, col, checkIconSvg) {
       contextMenuEl.textContent = "";
 
       const editColBtn = document.createElement("button");
@@ -2952,9 +3669,7 @@
           closeAllCollectionOverlays({ skipBarRender: true });
         }
         const updated = getCollections().map((c) => (c.id === col.id ? { ...c, hidden: true } : c));
-        saveSetting({ collections: updated }, () => {
-          reRenderSettingsMenu();
-        });
+        saveSetting({ collections: updated });
         reRenderBar();
       });
 
@@ -2972,7 +3687,7 @@
       `;
       colMenuBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        openStandaloneCollectionsMenu(clientX, 35);
+        openCollectionsSettingsScreen(checkIconSvg);
       });
 
       contextMenuEl.appendChild(editColBtn);
@@ -3009,7 +3724,7 @@
       if (!target) return;
 
       if (emojiPopover.classList.contains("open") && !emojiPopover.contains(target)) {
-        const isEmojiBtn = target.closest && target.closest(".col-emoji-swatch");
+        const isEmojiBtn = target.closest && target.closest(".col-emoji-swatch, .create-emoji-trigger");
         if (!isEmojiBtn) closeEmojiPopover();
       }
 
@@ -3019,17 +3734,8 @@
       }
     };
 
-    const onSettingsMenuPointerOver = (e) => {
-      if (!pinnedSubmenuRow || !deps.settingsMenu) return;
-      const target = e.target;
-      if (!target || !target.closest) return;
-      const topRow = target.closest(".fluent-menu > .menu-row");
-      if (topRow && topRow !== pinnedSubmenuRow) {
-        closeItemActionsMenu();
-      }
-    };
-
     const onShadowClick = (e) => {
+      if (Date.now() < suppressClickUntil) return;
       const target = e.target;
       if (!target) return;
 
@@ -3046,6 +3752,14 @@
 
     const onWindowKeyDown = (e) => {
       if (e.key !== "Escape") return;
+      if (activeDrag) {
+        const hadAutoEditor = activeDrag.autoOpenedEditor;
+        cleanupActiveDrag();
+        if (hadAutoEditor) {
+          closeAllCollectionOverlays();
+        }
+        return;
+      }
       if (emojiPopover.classList.contains("open")) {
         closeEmojiPopover();
         return;
@@ -3059,8 +3773,12 @@
         return;
       }
       if (inlineRenameState) {
+        const prevColId = inlineRenameState.colId;
         inlineRenameState = null;
         reRenderBar();
+        if (activeEditColId === prevColId) {
+          repositionEditorToPill(prevColId);
+        }
         notifyOverlayState();
         return;
       }
@@ -3075,13 +3793,15 @@
         const col = findCollection(activeViewColId);
         if (col) renderViewCardContent(col);
       }
+      if (creationState && creationState.showStyleControls && creationState.triggerBtnEl) {
+        const pillEl = creationState.triggerBtnEl.closest(".collection-create-pill") || creationState.triggerBtnEl;
+        const rect = pillEl.getBoundingClientRect();
+        floatingStyleBar.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 90))}px`;
+      }
     };
 
     shadow.addEventListener("pointerdown", onShadowPointerDownCapture, true);
     shadow.addEventListener("click", onShadowClick);
-    if (deps.settingsMenu) {
-      deps.settingsMenu.addEventListener("pointerover", onSettingsMenuPointerOver);
-    }
     window.addEventListener("keydown", onWindowKeyDown);
     window.addEventListener("resize", onWindowResize, { passive: true });
 
@@ -3090,8 +3810,12 @@
         refreshAllBrowserBookmarks();
       }
       if (options.settingsChanged) {
-        if (activeEditColId && !findCollection(activeEditColId)) {
-          closeAllCollectionOverlays({ skipBarRender: true });
+        if (activeEditColId) {
+          if (!findCollection(activeEditColId)) {
+            closeAllCollectionOverlays({ skipBarRender: true });
+          } else {
+            renderEditorPickerOnly();
+          }
         } else if (activeViewColId) {
           const updatedCol = findCollection(activeViewColId);
           if (!updatedCol || updatedCol.hidden) {
@@ -3110,9 +3834,6 @@
       cleanupActiveDrag();
       shadow.removeEventListener("pointerdown", onShadowPointerDownCapture, true);
       shadow.removeEventListener("click", onShadowClick);
-      if (deps.settingsMenu) {
-        deps.settingsMenu.removeEventListener("pointerover", onSettingsMenuPointerOver);
-      }
       window.removeEventListener("keydown", onWindowKeyDown);
       window.removeEventListener("resize", onWindowResize);
     }
@@ -3123,10 +3844,12 @@
       startCreatingCollection,
       openCollectionView,
       openCollectionEditor,
-      openStandaloneCollectionsMenu,
-      createSettingsSubmenuRow,
+      createSettingsCollectionsRow,
+      openCollectionsSettingsScreen,
+      renderCollectionsScreenInSettings,
       createBarContextMenuItems,
       renderCollectionContextMenu,
+      getPendingCreationUrls,
       closeAllCollectionOverlays,
       closeItemActionsMenu,
       handleOutsideInteraction,
@@ -3142,6 +3865,7 @@
   window.MNT_Collections = {
     getStyles,
     sortBarBookmarks,
+    getVisibleBarBookmarks,
     getContrastingTextColor,
     createController
   };

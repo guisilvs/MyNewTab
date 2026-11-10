@@ -57,6 +57,8 @@ const DEFAULT_SETTINGS = {
   lastClipboardHash: "",
   favoritesUrl: detectFavoritesUrl(),
   collections: [],
+  collectionsShowAddedOnBar: false,
+  collectionsAllowDuplicateItems: false,
   barBookmarksOrder: [],
   themeCache: {} // Memoriza { theme, bgBar } por buscador
 };
@@ -180,6 +182,12 @@ function sanitizeSettingsPartial(raw) {
     if (safeCollections !== null) {
       clean.collections = safeCollections;
     }
+  }
+  if (typeof raw.collectionsShowAddedOnBar === "boolean") {
+    clean.collectionsShowAddedOnBar = raw.collectionsShowAddedOnBar;
+  }
+  if (typeof raw.collectionsAllowDuplicateItems === "boolean") {
+    clean.collectionsAllowDuplicateItems = raw.collectionsAllowDuplicateItems;
   }
   if (Array.isArray(raw.barBookmarksOrder)) {
     const safeOrder = sanitizeBarBookmarksOrder(raw.barBookmarksOrder);
@@ -315,6 +323,8 @@ chrome.storage.onChanged.addListener((changes) => {
     changes.clipboardOpenMode ||
     changes.lastClipboardHash ||
     changes.collections ||
+    changes.collectionsShowAddedOnBar ||
+    changes.collectionsAllowDuplicateItems ||
     changes.barBookmarksOrder
   ) {
     chrome.tabs.query({}, (tabs) => {

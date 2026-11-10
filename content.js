@@ -138,6 +138,7 @@
   const ICONS = {
     folder: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1.5 3.5C1.5 2.67157 2.17157 2 3 2H6.17157C6.70201 2 7.21071 2.21071 7.58579 2.58579L8.41421 3.41421C8.78929 3.78929 9.29799 4 9.82843 4H13C13.8284 4 14.5 4.67157 14.5 5.5V12.5C14.5 13.3284 13.8284 14 13 14H3C2.17157 14 1.5 13.3284 1.5 12.5V3.5Z" fill="#F5B942" stroke="#D99B26" stroke-width="0.8"/></svg>`,
     more: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`,
+    chevronLeft: `<svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M7.5 2.5L4 6L7.5 9.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     chevronRight: `<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M4.5 2.25L8.25 6L4.5 9.75" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>`,
     check: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5L6.5 11.5L12.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     starEdit: `<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.5L9.85 5.25L14 5.85L11 8.77L11.7 12.9L8 10.95L4.3 12.9L5 8.77L2 5.85L6.15 5.25L8 1.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>`,
@@ -667,6 +668,8 @@
       .about-author {
         font-size: 11.5px;
         color: var(--text-muted);
+        padding: 2px 10px 6px;
+        user-select: none;
       }
 
       ${window.MNT_Collections ? window.MNT_Collections.getStyles() : ""}
@@ -829,10 +832,20 @@
       },
       reRenderBar: renderBookmarksList,
       reRenderSettingsMenu: renderSettingsMenu,
+      openSettingsPanel: () => {
+        if (!ui) return;
+        ui.settingsMenu.style.top = "35px";
+        ui.settingsMenu.style.right = "8px";
+        ui.settingsMenu.style.left = "auto";
+        ui.settingsMenu.classList.add("open");
+        ui.moreBtn.classList.add("active");
+        ui.isMenuOpen = true;
+        updateBarVisibilityState();
+      },
       onCollectionContextMenu: (col, e) => {
         if (!ui) return;
         closeAllMenus();
-        ui.collectionsController.renderCollectionContextMenu(ui.contextMenu, col, e.clientX);
+        ui.collectionsController.renderCollectionContextMenu(ui.contextMenu, col, ICONS.check);
         ui.contextMenu.style.top = `${Math.min(e.clientY, window.innerHeight - 210)}px`;
         ui.contextMenu.style.left = `${Math.min(e.clientX, window.innerWidth - 250)}px`;
         ui.contextMenu.classList.add("open");
@@ -974,8 +987,9 @@
     if (!ui) return;
     ui.strip.innerHTML = "";
 
+    const pendingUrls = ui.collectionsController?.getPendingCreationUrls?.() || [];
     const orderedBookmarks = window.MNT_Collections
-      ? window.MNT_Collections.sortBarBookmarks(currentBookmarks, currentSettings?.barBookmarksOrder)
+      ? window.MNT_Collections.getVisibleBarBookmarks(currentBookmarks, currentSettings, pendingUrls)
       : currentBookmarks;
 
     const hasBookmarksAfter = orderedBookmarks.some(
@@ -1084,6 +1098,8 @@
 
   function renderSettingsMenu() {
     if (!ui) return;
+    ui.collectionsController?.closeItemActionsMenu();
+    ui.settingsMenu.classList.remove("collections-screen");
     ui.settingsMenu.innerHTML = "";
 
     const searchEngineOptions = [
@@ -1351,7 +1367,7 @@
     }
 
     if (ui.collectionsController) {
-      const collectionsRow = ui.collectionsController.createSettingsSubmenuRow(ICONS.chevronRight);
+      const collectionsRow = ui.collectionsController.createSettingsCollectionsRow(ICONS.check);
       ui.settingsMenu.appendChild(collectionsRow);
     }
 
@@ -1362,23 +1378,34 @@
 
   function renderAboutMenu() {
     if (!ui) return;
+    ui.collectionsController?.closeItemActionsMenu();
+    ui.settingsMenu.classList.remove("collections-screen");
     ui.settingsMenu.textContent = "";
 
     const version = chrome.runtime.getManifest?.()?.version || "2.0";
 
-    const header = document.createElement("div");
-    header.className = "about-header";
+    const headerBtn = document.createElement("button");
+    headerBtn.type = "button";
+    headerBtn.className = "col-screen-header";
+    headerBtn.title = "Voltar para Mais opções";
 
-    const title = document.createElement("div");
-    title.className = "about-title";
+    const backIcon = document.createElement("span");
+    backIcon.className = "col-screen-back";
+    backIcon.innerHTML = ICONS.chevronLeft;
+
+    const title = document.createElement("span");
     title.textContent = `My New Tab ${version}`;
+
+    headerBtn.appendChild(backIcon);
+    headerBtn.appendChild(title);
+    headerBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      renderSettingsMenu();
+    });
 
     const author = document.createElement("div");
     author.className = "about-author";
     author.textContent = "Criado por Guilherme Silveira";
-
-    header.appendChild(title);
-    header.appendChild(author);
 
     const divider = document.createElement("div");
     divider.className = "menu-divider";
@@ -1403,13 +1430,14 @@
       closeAllMenus();
     });
 
-    ui.settingsMenu.appendChild(header);
+    ui.settingsMenu.appendChild(headerBtn);
+    ui.settingsMenu.appendChild(author);
     ui.settingsMenu.appendChild(divider);
     ui.settingsMenu.appendChild(linkedinLink);
     ui.settingsMenu.appendChild(githubLink);
   }
 
-  function renderContextMenu(anchorX = 12) {
+  function renderContextMenu() {
     if (!ui) return;
     ui.contextMenu.innerHTML = "";
 
@@ -1433,7 +1461,7 @@
     ui.contextMenu.appendChild(editFavBtn);
 
     if (ui.collectionsController) {
-      const colRows = ui.collectionsController.createBarContextMenuItems(anchorX);
+      const colRows = ui.collectionsController.createBarContextMenuItems(ICONS.check);
       colRows.forEach((r) => ui.contextMenu.appendChild(r));
     }
 
@@ -1477,7 +1505,8 @@
 
   function closeHostMenusOnly() {
     if (!ui) return;
-    ui.settingsMenu.classList.remove("open");
+    ui.collectionsController?.closeItemActionsMenu();
+    ui.settingsMenu.classList.remove("open", "collections-screen");
     ui.contextMenu.classList.remove("open");
     ui.folderDropdown.classList.remove("open");
     ui.moreBtn.classList.remove("active");
@@ -1669,7 +1698,7 @@
       e.preventDefault();
       e.stopPropagation();
       closeAllMenus();
-      renderContextMenu(e.clientX);
+      renderContextMenu();
       ui.contextMenu.style.top = `${Math.min(e.clientY, window.innerHeight - 245)}px`;
       ui.contextMenu.style.left = `${Math.min(e.clientX, window.innerWidth - 250)}px`;
       ui.contextMenu.classList.add("open");
