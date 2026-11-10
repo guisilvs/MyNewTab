@@ -4,7 +4,7 @@
 
 <h1 align="center">My New Tab</h1>
 
-Extensão **Manifest V3** para **Microsoft Edge** e **Google Chrome** que redefine a experiência de Nova Guia: permite escolher seu buscador tradicional ou assistente de IA preferido como página inicial, mantendo uma **barra de favoritos inteligente, ultrarrápida e visualmente nativa** ao navegador.
+Extensão **Manifest V3** para **Microsoft Edge** e **Google Chrome** que redefine a experiência de Nova Guia: permite escolher seu buscador tradicional, assistente de IA ou **qualquer site personalizado** como página inicial, mantendo uma **barra de favoritos inteligente, ultrarrápida e visualmente nativa** ao navegador.
 
 
 
@@ -37,15 +37,18 @@ Mais do que gerar código rápido, a metodologia adotada aqui foi o **Vibe Codin
 
 ## Mecanismos e Princípios de Engenharia Adotados
 
-### 1. Hub de Buscadores Tradicionais e Homes de IA
-No menu da barra (**Mais opções → Definir buscador padrão**), o usuário alterna instantaneamente sua Home entre duas categorias separadas visualmente:
+### 1. Hub de Buscadores, Homes de IA e Sites Personalizados
+No menu da barra (**Mais opções → Definir buscador padrão / Definir home padrão**), o usuário alterna instantaneamente sua Home entre:
 - **Buscadores Tradicionais**: Google, DuckDuckGo, Yahoo Search e Brave Search.
 - **Assistentes de IA**: Google Gemini, Claude, ChatGPT e Perplexity.
+- **Qualquer Página Personalizada (`+ Adicionar outro site`)**: em uma caixa dedicada logo abaixo, o usuário pode colar a URL de qualquer site (`trello.com`, `g1.com`, `wordpress.com`, etc.) para montar sua própria lista de homes rápidas sob `https://`.
 
-A extensão identifica de forma inteligente quando o usuário está na **Home** (início da busca ou tela de novo chat nas IAs) versus quando já iniciou uma pesquisa ou conversa, permitindo configurar a visibilidade da barra como:
+Nos 8 mecanismos pré-configurados, a extensão identifica de forma inteligente quando o usuário está na **Home** versus quando já iniciou uma pesquisa ou conversa, permitindo configurar a visibilidade da barra como:
 - **Mostrar somente no início** (fica fixa na Home e recolhe automaticamente nos resultados/respostas do chat);
 - **Sempre mostrar** (fixa tanto na Home quanto nos resultados/chats);
 - **Nunca mostrar** (recolhida, revelando-se suavemente apenas ao encostar o cursor no topo da tela).
+
+Em **homes personalizadas**, para preservar 100% da integridade de layout e performance de qualquer aplicação web arbitrária, as opções de barra fixa e Aceleração da Home ficam automaticamente indisponíveis, mantendo a barra acessível ao aproximar o cursor da borda superior da tela e descendo suavemente sempre que houver sugestões compatíveis do Clipboard Inteligente (`Site`, `Mapa` e `Dicionário`).
 
 ### 2. Aceleração da Home em 3 Camadas + Foco Limpo na Página
 Para eliminar o atraso típico de extensões de redirecionamento e o bug nativo do Chromium que seleciona toda a URL na barra de endereço ao abrir uma Nova Guia:

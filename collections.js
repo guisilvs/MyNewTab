@@ -2,6 +2,7 @@
   "use strict";
 
   if (window.top !== window.self) return;
+  if (window.MNT_Collections) return;
 
   const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
   const ITEMS_PER_PAGE = 7;

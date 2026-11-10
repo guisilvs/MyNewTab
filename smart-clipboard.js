@@ -176,6 +176,7 @@
   // CONTEXTO 2: CONTENT SCRIPT (Análise Inteligente, Classificação e Colagem Segura)
   // ============================================================================
   if (window.top !== window.self) return;
+  if (window.MNT_SmartClipboard) return;
 
   const KNOWN_TLDS = new Set([
     "com", "br", "org", "net", "io", "ai", "dev", "app", "gov", "edu", "jus",
@@ -691,7 +692,8 @@
 
     const isAiEngine = AI_ENGINES.has(engineId);
     const isSearchEngine = SEARCH_ENGINES.has(engineId);
-    if (!isAiEngine && !isSearchEngine) return null;
+    const isCustomEngine = typeof engineId === "string" && engineId.startsWith("custom_");
+    if (!isAiEngine && !isSearchEngine && !isCustomEngine) return null;
 
     const looksLikeCode = detectCodeInHead(rawNonEmptyLines);
 
@@ -766,7 +768,7 @@
             isOverflowing
           });
         }
-        if (isCategoryEnabled("colar", settings)) {
+        if (!isCustomEngine && isCategoryEnabled("colar", settings)) {
           dualSuggestions.push({
             category: "colar",
             label: "Colar",
@@ -780,8 +782,8 @@
       return null;
     }
 
-    // 5. Verifica Texto / Pergunta / Prompt / Textos Grandes ("Colar")
-    if (!isCategoryEnabled("colar", settings)) {
+    // 5. Verifica Texto / Pergunta / Prompt / Textos Grandes ("Colar") — indisponível em homes personalizadas
+    if (isCustomEngine || !isCategoryEnabled("colar", settings)) {
       return null;
     }
 

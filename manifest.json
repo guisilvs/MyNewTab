@@ -16,18 +16,11 @@
     "tabs",
     "alarms",
     "clipboardRead",
-    "offscreen"
+    "offscreen",
+    "scripting"
   ],
   "host_permissions": [
-    "https://www.google.com/*",
-    "https://www.google.com.br/*",
-    "https://duckduckgo.com/*",
-    "https://*.search.yahoo.com/*",
-    "https://search.brave.com/*",
-    "https://gemini.google.com/*",
-    "https://claude.ai/*",
-    "https://chatgpt.com/*",
-    "https://www.perplexity.ai/*"
+    "https://*/*"
   ],
   "chrome_url_overrides": {
     "newtab": "newtab.html"
@@ -56,15 +49,7 @@
     {
       "resources": ["_favicon/*"],
       "matches": [
-        "https://www.google.com/*",
-        "https://www.google.com.br/*",
-        "https://duckduckgo.com/*",
-        "https://*.search.yahoo.com/*",
-        "https://search.brave.com/*",
-        "https://gemini.google.com/*",
-        "https://claude.ai/*",
-        "https://chatgpt.com/*",
-        "https://www.perplexity.ai/*"
+        "https://*/*"
       ],
       "use_dynamic_url": true
     }
