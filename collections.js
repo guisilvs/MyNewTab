@@ -43,6 +43,7 @@
     edit: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M11.3 2.3a1.5 1.5 0 0 1 2.1 2.1L5.6 12.2l-3 .7.7-3 8-7.6Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg>`,
     rename: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 4h10M8 4v8M5.5 12h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>`,
     hide: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 2l12 12M6.5 6.6a2 2 0 0 0 2.8 2.8M3.6 5.3C2.5 6.2 1.8 7.5 1.5 8c.8 1.6 3.1 4.2 6.5 4.2 1.2 0 2.3-.3 3.2-.8M6.2 3.9c.6-.1 1.2-.2 1.8-.2 3.4 0 5.7 2.6 6.5 4.3-.3.6-.9 1.6-1.8 2.4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>`,
+    check: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5L6.5 11.5L12.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     chevronLeft: `<svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M7.5 2.5L4 6L7.5 9.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     chevronRight: `<svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M4.5 2.5L8 6L4.5 9.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`
   };
@@ -420,6 +421,53 @@
         transform: scale(1.1);
       }
 
+      .col-sync-folder-pill {
+        height: 28px;
+        border-radius: 7px;
+        border: 1px solid var(--menu-border);
+        background-color: var(--capsule-bg);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+        color: var(--text-color);
+        font-family: var(--mnt-font);
+        font-size: 11.5px;
+        font-weight: 400;
+        line-height: 1;
+        padding: 0 10px 0 8px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        box-sizing: border-box;
+        white-space: nowrap;
+        max-width: 218px;
+        overflow: hidden;
+        transition: transform 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+      }
+
+      .col-sync-folder-pill:hover {
+        transform: scale(1.02);
+      }
+
+      .col-sync-folder-pill.paused {
+        color: var(--text-muted);
+      }
+
+      .col-sync-check {
+        width: 14px;
+        height: 14px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        color: var(--text-color);
+      }
+
+      .col-sync-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
       .col-emoji-popover {
         position: fixed;
         width: 224px;
@@ -598,6 +646,21 @@
 
       .col-view-add-btn:hover {
         background-color: var(--hover-bg);
+      }
+
+      .col-view-sync-footer {
+        margin-top: 2px;
+        padding: 4px 10px 3px;
+        font-family: var(--mnt-font);
+        font-size: 10.5px;
+        line-height: 1.3;
+        color: var(--text-muted);
+        opacity: 0.78;
+        text-align: center;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        user-select: none;
       }
 
       .col-editor-panel {
@@ -969,6 +1032,13 @@
 
       .col-item-actions-menu {
         min-width: 168px;
+        max-width: 284px;
+      }
+
+      .col-item-actions-menu .col-action-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .menu-row.danger-row {
@@ -1129,6 +1199,126 @@
 
     function findCollection(colId) {
       return getCollections().find((c) => c.id === colId) || null;
+    }
+
+    let lastCheckIconSvg =
+      typeof deps.checkIconSvg === "string" && deps.checkIconSvg ? deps.checkIconSvg : COL_ICONS.check;
+
+    function getCheckSvg(overrideSvg) {
+      if (typeof overrideSvg === "string" && overrideSvg) {
+        lastCheckIconSvg = overrideSvg;
+      }
+      return lastCheckIconSvg;
+    }
+
+    function isCollectionActivelySynced(col) {
+      if (!col || !col.syncedFolderId) return false;
+      if (getSettings()?.collectionsSyncFolders === false) return false;
+      return col.syncEnabled !== false;
+    }
+
+    function getFolderSyncState() {
+      const raw = getSettings()?.folderSyncState;
+      return {
+        dismissedFolderIds: Array.isArray(raw?.dismissedFolderIds) ? raw.dismissedFolderIds.slice() : [],
+        userLockedUrls: Array.isArray(raw?.userLockedUrls) ? raw.userLockedUrls.slice() : [],
+        promotedBarItems: Array.isArray(raw?.promotedBarItems) ? raw.promotedBarItems.slice() : [],
+        archivedCollections: Array.isArray(raw?.archivedCollections) ? raw.archivedCollections.slice() : []
+      };
+    }
+
+    function buildUpdatedFolderSyncState({ lockUrls = [], promoteItems = [], dismissFolderIds = [] } = {}) {
+      const state = getFolderSyncState();
+      const lockedSet = new Set(state.userLockedUrls.map((u) => normalizeUrlKey(u)).filter(Boolean));
+      for (const rawUrl of lockUrls) {
+        if (rawUrl && isSafeUrl(rawUrl)) {
+          lockedSet.add(normalizeUrlKey(rawUrl));
+        }
+      }
+
+      const dismissedSet = new Set(state.dismissedFolderIds.map((id) => String(id || "")).filter(Boolean));
+      for (const fid of dismissFolderIds) {
+        if (fid) dismissedSet.add(String(fid));
+      }
+
+      const promotedMap = new Map();
+      for (const p of state.promotedBarItems) {
+        if (p && isSafeUrl(p.url)) {
+          promotedMap.set(normalizeUrlKey(p.url), {
+            id: String(p.id || ""),
+            title: String(p.title || p.url).slice(0, 200),
+            url: normalizeUrlKey(p.url)
+          });
+        }
+      }
+      for (const item of promoteItems) {
+        if (item && isSafeUrl(item.url)) {
+          const norm = normalizeUrlKey(item.url);
+          if (!promotedMap.has(norm)) {
+            promotedMap.set(norm, {
+              id: String(item.id || `bm_${Date.now().toString(36)}`),
+              title: String(item.title || norm).slice(0, 200),
+              url: norm
+            });
+          }
+        }
+      }
+
+      return {
+        dismissedFolderIds: Array.from(dismissedSet),
+        userLockedUrls: Array.from(lockedSet),
+        promotedBarItems: Array.from(promotedMap.values()),
+        archivedCollections: state.archivedCollections
+      };
+    }
+
+    function updateEditorSyncPillState() {
+      if (!activeEditColId) return;
+      const col = findCollection(activeEditColId);
+      const pillBtn = editorPanel.querySelector(".col-sync-folder-pill");
+      if (!col || !pillBtn) return;
+      const active = isCollectionActivelySynced(col);
+      pillBtn.classList.toggle("paused", !active);
+      pillBtn.setAttribute("aria-pressed", active ? "true" : "false");
+      const checkEl = pillBtn.querySelector(".col-sync-check");
+      if (checkEl) {
+        checkEl.innerHTML = active ? getCheckSvg() : "";
+      }
+    }
+
+    function toggleCollectionFolderSync(colId, onDone) {
+      const col = findCollection(colId);
+      if (!col || !col.syncedFolderId) return;
+      const nextEnabled = !isCollectionActivelySynced(col);
+
+      const sendToggle = () => {
+        chrome.runtime.sendMessage(
+          { action: "setCollectionFolderSync", colId, enabled: nextEnabled },
+          (resp) => {
+            if (resp && resp.ok && typeof deps.applySyncResponse === "function") {
+              deps.applySyncResponse(resp);
+            }
+            reRenderBar();
+            if (activeEditColId === colId) {
+              repositionEditorToPill(colId);
+              updateEditorSyncPillState();
+              renderEditorLists();
+            } else if (activeViewColId === colId) {
+              const refreshed = findCollection(colId);
+              if (refreshed) renderViewCardContent(refreshed);
+            }
+            if (typeof onDone === "function") onDone(resp);
+          }
+        );
+      };
+
+      if (nextEnabled && getSettings()?.collectionsSyncFolders === false) {
+        saveSetting({ collectionsSyncFolders: true }, () => {
+          sendToggle();
+        });
+      } else {
+        sendToggle();
+      }
     }
 
     function hasAnyOpenOverlay() {
@@ -1540,12 +1730,18 @@
       };
 
       const nextCollections = [...getCollections(), newCol];
+      const settingsPatch = { collections: nextCollections };
+      if (initialItems.length > 0) {
+        settingsPatch.folderSyncState = buildUpdatedFolderSyncState({
+          lockUrls: initialItems.map((it) => it?.url)
+        });
+      }
       creationState = null;
       floatingStyleBar.classList.remove("open");
       floatingStyleBar.textContent = "";
       closeEmojiPopover();
 
-      saveSetting({ collections: nextCollections }, () => {
+      saveSetting(settingsPatch, () => {
         reRenderSettingsMenu();
       });
 
@@ -1613,7 +1809,17 @@
           nextName = col.name || "Coleção";
         }
         if (nextName !== col.name) {
-          const updated = getCollections().map((c) => (c.id === colId ? { ...c, name: nextName } : c));
+          const updated = getCollections().map((c) => {
+            if (c.id !== colId) return c;
+            if (c.syncedFolderId) {
+              return {
+                ...c,
+                name: nextName,
+                nameCustomized: nextName !== (c.syncedFolderName || "")
+              };
+            }
+            return { ...c, name: nextName };
+          });
           saveSetting({ collections: updated }, () => {
             reRenderSettingsMenu();
           });
@@ -1721,6 +1927,15 @@
           attachCollectionItemReorderDrag(link, col.id, index, viewCard, false);
           viewCard.appendChild(link);
         });
+      }
+
+      if (isCollectionActivelySynced(col)) {
+        const syncFooter = document.createElement("div");
+        syncFooter.className = "col-view-sync-footer";
+        const folderLabel = col.syncedFolderName || col.name || "pasta";
+        syncFooter.textContent = `Sincronizado com ${folderLabel}`;
+        syncFooter.title = syncFooter.textContent;
+        viewCard.appendChild(syncFooter);
       }
 
       viewCard.classList.add("open");
@@ -1895,9 +2110,18 @@
           const current = findCollection(col.id);
           if (!current) return;
           const safeName = !current.name ? "Coleção" : current.name;
-          const updated = getCollections().map((c) =>
-            c.id === col.id ? { ...c, emoji: "", name: safeName } : c
-          );
+          const updated = getCollections().map((c) => {
+            if (c.id !== col.id) return c;
+            if (c.syncedFolderId) {
+              return {
+                ...c,
+                emoji: "",
+                name: safeName,
+                nameCustomized: safeName !== (c.syncedFolderName || "")
+              };
+            }
+            return { ...c, emoji: "", name: safeName };
+          });
           saveSetting({ collections: updated }, () => {
             reRenderSettingsMenu();
           });
@@ -1905,6 +2129,36 @@
           repositionEditorToPill(col.id);
         }
       });
+
+      if (col.syncedFolderId) {
+        const syncPillBtn = document.createElement("button");
+        syncPillBtn.type = "button";
+        const activeSync = isCollectionActivelySynced(col);
+        syncPillBtn.className = "col-sync-folder-pill" + (activeSync ? "" : " paused");
+        syncPillBtn.setAttribute("aria-pressed", activeSync ? "true" : "false");
+        const folderTitle = col.syncedFolderName || col.name || "pasta";
+        syncPillBtn.title = `Sincronizar com "${folderTitle}"`;
+
+        const checkSpan = document.createElement("span");
+        checkSpan.className = "col-sync-check";
+        checkSpan.innerHTML = activeSync ? getCheckSvg() : "";
+
+        const labelSpan = document.createElement("span");
+        labelSpan.className = "col-sync-label";
+        labelSpan.textContent = "Sincronizar com a pasta";
+
+        syncPillBtn.appendChild(checkSpan);
+        syncPillBtn.appendChild(labelSpan);
+
+        syncPillBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          toggleCollectionFolderSync(col.id, () => {
+            reRenderSettingsMenu();
+          });
+        });
+
+        styleControls.wrap.appendChild(syncPillBtn);
+      }
 
       editorPanel.appendChild(dropzoneBox);
       editorPanel.appendChild(pickerBox);
@@ -1934,14 +2188,22 @@
         url: bm.url
       };
 
-      if (typeof targetIndex === "number" && targetIndex >= 0 && targetIndex <= nextItems.length) {
+      const hasExplicitIndex = typeof targetIndex === "number" && targetIndex >= 0 && targetIndex <= nextItems.length;
+      if (hasExplicitIndex) {
         nextItems.splice(targetIndex, 0, entry);
       } else {
         nextItems.push(entry);
       }
 
-      const updated = getCollections().map((c) => (c.id === colId ? { ...c, items: nextItems } : c));
-      saveSetting({ collections: updated });
+      const updated = getCollections().map((c) => {
+        if (c.id !== colId) return c;
+        if (c.syncedFolderId && hasExplicitIndex) {
+          return { ...c, items: nextItems, orderCustomized: true };
+        }
+        return { ...c, items: nextItems };
+      });
+      const nextSyncState = buildUpdatedFolderSyncState({ lockUrls: [bm.url] });
+      saveSetting({ collections: updated, folderSyncState: nextSyncState });
       reRenderBar();
 
       if (activeEditColId === colId) {
@@ -1953,9 +2215,22 @@
     function removeBookmarkFromCollection(colId, itemIndex) {
       const col = findCollection(colId);
       if (!col) return;
+      const removedItem = col.items?.[itemIndex] || null;
       const nextItems = col.items.filter((_, idx) => idx !== itemIndex);
       const updated = getCollections().map((c) => (c.id === colId ? { ...c, items: nextItems } : c));
-      saveSetting({ collections: updated });
+      const settingsPatch = { collections: updated };
+
+      if (removedItem && isSafeUrl(removedItem.url)) {
+        if (typeof deps.ensureBarBookmarkNodes === "function") {
+          deps.ensureBarBookmarkNodes([removedItem]);
+        }
+        settingsPatch.folderSyncState = buildUpdatedFolderSyncState({
+          lockUrls: [removedItem.url],
+          promoteItems: [removedItem]
+        });
+      }
+
+      saveSetting(settingsPatch);
       reRenderBar();
 
       if (activeEditColId === colId) {
@@ -1979,7 +2254,13 @@
       if (clampedTarget === fromIndex) return;
 
       nextItems.splice(clampedTarget, 0, moved);
-      const updated = getCollections().map((c) => (c.id === colId ? { ...c, items: nextItems } : c));
+      const updated = getCollections().map((c) => {
+        if (c.id !== colId) return c;
+        if (c.syncedFolderId) {
+          return { ...c, items: nextItems, orderCustomized: true };
+        }
+        return { ...c, items: nextItems };
+      });
       saveSetting({ collections: updated }, () => {
         reRenderSettingsMenu();
       });
@@ -2341,13 +2622,15 @@
       const alreadyInTarget = toCol.items.some((it) => normalizeUrlKey(it?.url) === itemKey);
 
       const nextToItems = toCol.items.slice();
+      const hasExplicitTargetIndex =
+        typeof targetIndex === "number" && targetIndex >= 0 && targetIndex <= nextToItems.length;
       if (!alreadyInTarget) {
         const entry = {
           id: String(item.id || `bm_${Date.now().toString(36)}`),
           title: String(item.title || item.url).slice(0, 200),
           url: item.url
         };
-        if (typeof targetIndex === "number" && targetIndex >= 0 && targetIndex <= nextToItems.length) {
+        if (hasExplicitTargetIndex) {
           nextToItems.splice(targetIndex, 0, entry);
         } else {
           nextToItems.push(entry);
@@ -2356,11 +2639,17 @@
 
       const updated = getCollections().map((c) => {
         if (c.id === fromColId) return { ...c, items: nextFromItems };
-        if (c.id === toColId) return { ...c, items: nextToItems };
+        if (c.id === toColId) {
+          if (c.syncedFolderId && hasExplicitTargetIndex) {
+            return { ...c, items: nextToItems, orderCustomized: true };
+          }
+          return { ...c, items: nextToItems };
+        }
         return c;
       });
 
-      saveSetting({ collections: updated }, () => {
+      const nextSyncState = buildUpdatedFolderSyncState({ lockUrls: [item.url] });
+      saveSetting({ collections: updated, folderSyncState: nextSyncState }, () => {
         reRenderSettingsMenu();
       });
       reRenderBar();
@@ -2384,6 +2673,10 @@
       const nextItems = col.items.filter((_, idx) => idx !== itemIndex);
       const nextCollections = getCollections().map((c) => (c.id === colId ? { ...c, items: nextItems } : c));
 
+      if (isSafeUrl(item.url) && typeof deps.ensureBarBookmarkNodes === "function") {
+        deps.ensureBarBookmarkNodes([item]);
+      }
+
       const allBarNodes = getBookmarks() || [];
       const barNode =
         allBarNodes.find((n) => n && n.url && String(n.id) === String(item.id)) ||
@@ -2391,6 +2684,12 @@
         null;
 
       const settingsPatch = { collections: nextCollections };
+      if (isSafeUrl(item.url)) {
+        settingsPatch.folderSyncState = buildUpdatedFolderSyncState({
+          lockUrls: [item.url],
+          promoteItems: [item]
+        });
+      }
 
       if (barNode && barNode.id != null) {
         const barNodeId = String(barNode.id);
@@ -3288,22 +3587,60 @@
     // ============================================================================
     // TELA DE COLEÇÕES NOS AJUSTES (SEGUINDO O PADRÃO DO MENU MY NEW TAB)
     // ============================================================================
-    function openItemActionsDropdown(anchorBtn, col, refreshMenuContentFn) {
+    function openItemActionsDropdown(anchorBtn, col, refreshMenuContentFn, checkIconSvg = "") {
       if (activeActionsColId === col.id && itemActionsMenu.classList.contains("open")) {
         closeItemActionsMenu();
         return;
       }
 
+      const svg = getCheckSvg(checkIconSvg);
       closeItemActionsMenu();
       activeActionsColId = col.id;
       anchorBtn.classList.add("active");
 
+      const hasFolderSync = Boolean(col.syncedFolderId);
+
+      const createActionRow = (labelText, { checked = false, danger = false } = {}) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "menu-row" + (danger ? " danger-row" : "");
+
+        if (!hasFolderSync) {
+          btn.textContent = labelText;
+          return {
+            btn,
+            setLabel: (txt) => {
+              btn.textContent = txt;
+            }
+          };
+        }
+
+        const left = document.createElement("div");
+        left.className = "menu-row-left";
+
+        const slot = document.createElement("span");
+        slot.className = "check-slot";
+        slot.innerHTML = checked ? svg : "";
+
+        const labelEl = document.createElement("span");
+        labelEl.className = "col-action-label";
+        labelEl.textContent = labelText;
+
+        left.appendChild(slot);
+        left.appendChild(labelEl);
+        btn.appendChild(left);
+
+        return {
+          btn,
+          setLabel: (txt) => {
+            labelEl.textContent = txt;
+          }
+        };
+      };
+
       // Opção 1: Editar
-      const editBtn = document.createElement("button");
-      editBtn.type = "button";
-      editBtn.className = "menu-row";
-      editBtn.textContent = "Editar";
-      editBtn.addEventListener("click", (e) => {
+      const editRow = createActionRow("Editar");
+      editRow.btn.addEventListener("click", (e) => {
         e.stopPropagation();
         closeItemActionsMenu();
         closeHostMenus();
@@ -3311,23 +3648,60 @@
       });
 
       // Opção 2: Renomear (abre apenas o campo inline de nome na barra)
-      const renameBtn = document.createElement("button");
-      renameBtn.type = "button";
-      renameBtn.className = "menu-row";
-      renameBtn.textContent = "Renomear";
-      renameBtn.addEventListener("click", (e) => {
+      const renameRow = createActionRow("Renomear");
+      renameRow.btn.addEventListener("click", (e) => {
         e.stopPropagation();
         closeItemActionsMenu();
         closeHostMenus();
         startInlineRename(col.id, { keepEditorOpen: false });
       });
 
-      // Opção 3: Ocultar / Mostrar
-      const toggleHideBtn = document.createElement("button");
-      toggleHideBtn.type = "button";
-      toggleHideBtn.className = "menu-row";
-      toggleHideBtn.textContent = col.hidden ? "Mostrar na barra" : "Ocultar";
-      toggleHideBtn.addEventListener("click", (e) => {
+      itemActionsMenu.appendChild(editRow.btn);
+      itemActionsMenu.appendChild(renameRow.btn);
+
+      // Opções exclusivas de coleções sincronizadas com pastas (acima de Ocultar)
+      if (hasFolderSync) {
+        const folderLabel = col.syncedFolderName || col.name || "pasta";
+        const syncText = `Sincronizar com ${folderLabel}`;
+        const syncRow = createActionRow(syncText, { checked: isCollectionActivelySynced(col) });
+        syncRow.btn.title = syncText;
+        syncRow.btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          closeItemActionsMenu();
+          toggleCollectionFolderSync(col.id, () => {
+            refreshMenuContentFn();
+          });
+        });
+
+        const resyncRow = createActionRow("Desfazer alterações (ressincronizar)");
+        resyncRow.btn.title = "Restaurar nome e favoritos originais da pasta do navegador";
+        resyncRow.btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          closeItemActionsMenu();
+          chrome.runtime.sendMessage({ action: "resyncCollection", colId: col.id }, (resp) => {
+            if (resp && resp.ok && typeof deps.applySyncResponse === "function") {
+              deps.applySyncResponse(resp);
+            }
+            reRenderBar();
+            if (activeEditColId === col.id) {
+              repositionEditorToPill(col.id);
+              updateEditorSyncPillState();
+              renderEditorLists();
+            } else if (activeViewColId === col.id) {
+              const refreshed = findCollection(col.id);
+              if (refreshed) renderViewCardContent(refreshed);
+            }
+            refreshMenuContentFn();
+          });
+        });
+
+        itemActionsMenu.appendChild(syncRow.btn);
+        itemActionsMenu.appendChild(resyncRow.btn);
+      }
+
+      // Opção: Ocultar / Mostrar
+      const toggleHideRow = createActionRow(col.hidden ? "Mostrar na barra" : "Ocultar");
+      toggleHideRow.btn.addEventListener("click", (e) => {
         e.stopPropagation();
         const nextHidden = !col.hidden;
         const updated = getCollections().map((c) => (c.id === col.id ? { ...c, hidden: nextHidden } : c));
@@ -3344,21 +3718,35 @@
         });
       });
 
-      // Opção 4: Apagar (em vermelho com confirmação no próprio botão)
+      // Opção: Apagar (em vermelho com confirmação no próprio botão)
       let armedDelete = false;
-      const deleteBtn = document.createElement("button");
-      deleteBtn.type = "button";
-      deleteBtn.className = "menu-row danger-row";
-      deleteBtn.textContent = "Apagar";
-      deleteBtn.addEventListener("click", (e) => {
+      const deleteRow = createActionRow("Apagar", { danger: true });
+      deleteRow.btn.addEventListener("click", (e) => {
         e.stopPropagation();
         if (!armedDelete) {
           armedDelete = true;
-          deleteBtn.classList.add("confirming");
-          deleteBtn.textContent = "Aperte para confirmar";
+          deleteRow.btn.classList.add("confirming");
+          deleteRow.setLabel("Aperte para confirmar");
           return;
         }
+        const currentCol = findCollection(col.id) || col;
+        const releasedItems = Array.isArray(currentCol.items)
+          ? currentCol.items.filter((it) => it && isSafeUrl(it.url))
+          : [];
+        if (releasedItems.length > 0 && typeof deps.ensureBarBookmarkNodes === "function") {
+          deps.ensureBarBookmarkNodes(releasedItems);
+        }
+
         const remaining = getCollections().filter((c) => c.id !== col.id);
+        const settingsPatch = { collections: remaining };
+        if (currentCol.syncedFolderId || releasedItems.length > 0) {
+          settingsPatch.folderSyncState = buildUpdatedFolderSyncState({
+            dismissFolderIds: currentCol.syncedFolderId ? [currentCol.syncedFolderId] : [],
+            lockUrls: releasedItems.map((it) => it.url),
+            promoteItems: releasedItems
+          });
+        }
+
         if (activeViewColId === col.id || activeEditColId === col.id) {
           activeViewColId = null;
           activeEditColId = null;
@@ -3366,23 +3754,25 @@
           editorPanel.classList.remove("open");
         }
         closeItemActionsMenu();
-        saveSetting({ collections: remaining }, () => {
+        saveSetting(settingsPatch, () => {
           reRenderBar();
           refreshMenuContentFn();
         });
       });
 
-      itemActionsMenu.appendChild(editBtn);
-      itemActionsMenu.appendChild(renameBtn);
-      itemActionsMenu.appendChild(toggleHideBtn);
-      itemActionsMenu.appendChild(deleteBtn);
+      itemActionsMenu.appendChild(toggleHideRow.btn);
+      itemActionsMenu.appendChild(deleteRow.btn);
+
+      itemActionsMenu.style.left = "0px";
+      itemActionsMenu.style.top = "0px";
+      itemActionsMenu.classList.add("open");
 
       const rect = anchorBtn.getBoundingClientRect();
-      const menuW = 176;
-      const menuH = 136;
+      const menuW = itemActionsMenu.offsetWidth || (hasFolderSync ? 236 : 176);
+      const menuH = itemActionsMenu.offsetHeight || (hasFolderSync ? 196 : 136);
       let left = rect.right - menuW;
       if (left < 8) left = rect.left;
-      left = Math.min(left, window.innerWidth - menuW - 8);
+      left = Math.max(8, Math.min(left, window.innerWidth - menuW - 8));
 
       let top = rect.bottom + 4;
       if (top + menuH > window.innerHeight - 8) {
@@ -3391,13 +3781,13 @@
 
       itemActionsMenu.style.left = `${left}px`;
       itemActionsMenu.style.top = `${top}px`;
-      itemActionsMenu.classList.add("open");
     }
 
     function renderCollectionsScreenInSettings(checkIconSvg = "") {
       const containerEl = deps.settingsMenu;
       if (!containerEl) return;
 
+      const svg = getCheckSvg(checkIconSvg);
       closeItemActionsMenu();
       containerEl.textContent = "";
       containerEl.classList.add("collections-screen");
@@ -3463,7 +3853,7 @@
           dotsBtn.innerHTML = COL_ICONS.dots;
           dotsBtn.addEventListener("click", (e) => {
             e.stopPropagation();
-            openItemActionsDropdown(dotsBtn, col, () => renderCollectionsScreenInSettings(checkIconSvg));
+            openItemActionsDropdown(dotsBtn, col, () => renderCollectionsScreenInSettings(svg), svg);
           });
 
           row.appendChild(pillPreview);
@@ -3507,43 +3897,112 @@
       divBottom.className = "menu-divider";
       containerEl.appendChild(divBottom);
 
-      // 7. Opções de comportamento das coleções (desmarcadas por padrão)
+      // 7. Opções de sincronização e comportamento das coleções
       const settings = getSettings() || {};
+      const syncFoldersActive = settings.collectionsSyncFolders !== false;
 
-      const showOnBarBtn = document.createElement("button");
-      showOnBarBtn.type = "button";
-      showOnBarBtn.className = "menu-row";
-      showOnBarBtn.innerHTML = `
-        <div class="menu-row-left">
-          <span class="check-slot">${settings.collectionsShowAddedOnBar ? checkIconSvg : ""}</span>
-          <span>Mostrar favorito adicionado na barra</span>
-        </div>
-      `;
-      showOnBarBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const nextVal = !Boolean(getSettings()?.collectionsShowAddedOnBar);
-        saveSetting({ collectionsShowAddedOnBar: nextVal }, () => {
-          reRenderBar();
-          renderCollectionsScreenInSettings(checkIconSvg);
-        });
-      });
+      const buildOptionToggleRow = (label, isChecked, onToggle) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "menu-row";
 
-      const allowDupBtn = document.createElement("button");
-      allowDupBtn.type = "button";
-      allowDupBtn.className = "menu-row";
-      allowDupBtn.innerHTML = `
-        <div class="menu-row-left">
-          <span class="check-slot">${settings.collectionsAllowDuplicateItems ? checkIconSvg : ""}</span>
-          <span>Adicionar o mesmo favorito em várias coleções</span>
-        </div>
-      `;
-      allowDupBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const nextVal = !Boolean(getSettings()?.collectionsAllowDuplicateItems);
-        saveSetting({ collectionsAllowDuplicateItems: nextVal }, () => {
-          renderCollectionsScreenInSettings(checkIconSvg);
+        const left = document.createElement("div");
+        left.className = "menu-row-left";
+
+        const slot = document.createElement("span");
+        slot.className = "check-slot";
+        slot.innerHTML = isChecked ? svg : "";
+
+        const text = document.createElement("span");
+        text.textContent = label;
+
+        left.appendChild(slot);
+        left.appendChild(text);
+        btn.appendChild(left);
+
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          onToggle();
         });
-      });
+        return btn;
+      };
+
+      const syncFoldersBtn = buildOptionToggleRow(
+        syncFoldersActive
+          ? "Sincronizar com suas pastas"
+          : 'Sincronizar somente "Barra de favoritos"',
+        syncFoldersActive,
+        () => {
+          const nextVal = !(getSettings()?.collectionsSyncFolders !== false);
+          saveSetting({ collectionsSyncFolders: nextVal }, () => {
+            if (activeEditColId && !findCollection(activeEditColId)) {
+              closeAllCollectionOverlays({ skipBarRender: true });
+            } else if (activeViewColId && !findCollection(activeViewColId)) {
+              closeAllCollectionOverlays({ skipBarRender: true });
+            }
+            reRenderBar();
+            renderCollectionsScreenInSettings(svg);
+          });
+        }
+      );
+      containerEl.appendChild(syncFoldersBtn);
+
+      if (syncFoldersActive) {
+        const resyncAllBtn = buildOptionToggleRow(
+          "Desfazer alterações (ressincronizar)",
+          false,
+          () => {
+            chrome.runtime.sendMessage({ action: "resyncAllCollections" }, (resp) => {
+              if (resp && resp.ok && typeof deps.applySyncResponse === "function") {
+                deps.applySyncResponse(resp);
+              }
+              reRenderBar();
+              if (activeEditColId) {
+                if (!findCollection(activeEditColId)) {
+                  closeAllCollectionOverlays({ skipBarRender: true });
+                } else {
+                  repositionEditorToPill(activeEditColId);
+                  updateEditorSyncPillState();
+                  renderEditorLists();
+                }
+              } else if (activeViewColId) {
+                const refreshed = findCollection(activeViewColId);
+                if (!refreshed || refreshed.hidden) {
+                  closeAllCollectionOverlays({ skipBarRender: true });
+                } else {
+                  renderViewCardContent(refreshed);
+                }
+              }
+              renderCollectionsScreenInSettings(svg);
+            });
+          }
+        );
+        resyncAllBtn.title = "Desfazer alterações nas coleções sincronizadas e deixar igual às pastas dos favoritos";
+        containerEl.appendChild(resyncAllBtn);
+      }
+
+      const showOnBarBtn = buildOptionToggleRow(
+        "Mostrar favorito adicionado na barra",
+        Boolean(settings.collectionsShowAddedOnBar),
+        () => {
+          const nextVal = !Boolean(getSettings()?.collectionsShowAddedOnBar);
+          saveSetting({ collectionsShowAddedOnBar: nextVal }, () => {
+            reRenderBar();
+            renderCollectionsScreenInSettings(svg);
+          });
+        }
+      );
+
+      const allowDupBtn = buildOptionToggleRow(
+        "Adicionar o mesmo favorito em várias coleções",
+        Boolean(settings.collectionsAllowDuplicateItems),
+        () => {
+          const nextVal = !Boolean(getSettings()?.collectionsAllowDuplicateItems);
+          saveSetting({ collectionsAllowDuplicateItems: nextVal }, () => {
+            renderCollectionsScreenInSettings(svg);
+          });
+        }
+      );
 
       containerEl.appendChild(showOnBarBtn);
       containerEl.appendChild(allowDupBtn);
@@ -3815,7 +4274,8 @@
           if (!findCollection(activeEditColId)) {
             closeAllCollectionOverlays({ skipBarRender: true });
           } else {
-            renderEditorPickerOnly();
+            updateEditorSyncPillState();
+            renderEditorLists();
           }
         } else if (activeViewColId) {
           const updatedCol = findCollection(activeViewColId);
@@ -3824,6 +4284,14 @@
           } else {
             renderViewCardContent(updatedCol);
           }
+        }
+        if (
+          deps.settingsMenu &&
+          deps.settingsMenu.classList.contains("open") &&
+          deps.settingsMenu.classList.contains("collections-screen") &&
+          !activeActionsColId
+        ) {
+          renderCollectionsScreenInSettings(getCheckSvg());
         }
         if (!creationState && !inlineRenameState) {
           reRenderBar();

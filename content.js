@@ -1098,8 +1098,48 @@
       host: ui.host,
       strip: ui.strip,
       settingsMenu: ui.settingsMenu,
+      checkIconSvg: ICONS.check,
       getSettings: () => currentSettings,
       getBookmarks: () => currentBookmarks,
+      ensureBarBookmarkNodes: (nodes) => {
+        if (!Array.isArray(nodes) || nodes.length === 0) return;
+        const existingUrls = new Set();
+        currentBookmarks.forEach((b) => {
+          if (b && b.url) {
+            try {
+              existingUrls.add(new URL(b.url).toString());
+            } catch (e) {
+              existingUrls.add(b.url);
+            }
+          }
+        });
+        nodes.forEach((n) => {
+          if (!n || !n.url || !isSafeUrl(n.url)) return;
+          let norm;
+          try {
+            norm = new URL(n.url).toString();
+          } catch (e) {
+            return;
+          }
+          if (!existingUrls.has(norm)) {
+            existingUrls.add(norm);
+            currentBookmarks.push({
+              id: String(n.id || `bm_${Date.now().toString(36)}`),
+              title: String(n.title || ""),
+              url: norm
+            });
+          }
+        });
+      },
+      applySyncResponse: (resp) => {
+        if (!resp || !resp.ok) return;
+        if (resp.settings) {
+          currentSettings = { ...currentSettings, ...resp.settings };
+        }
+        if (Array.isArray(resp.items)) {
+          currentBookmarks = resp.items;
+        }
+      },
       saveSetting,
       isSafeUrl,
       getFaviconUrl,
@@ -2474,8 +2514,16 @@
 
   function saveSetting(partial, callback) {
     currentSettings = { ...currentSettings, ...partial };
-    chrome.runtime.sendMessage({ action: "updateSettings", newSettings: partial }, () => {
-      if (callback) callback();
+    chrome.runtime.sendMessage({ action: "updateSettings", newSettings: partial }, (resp) => {
+      if (resp && resp.ok) {
+        if (resp.settings) {
+          currentSettings = { ...currentSettings, ...resp.settings };
+        }
+        if (Array.isArray(resp.items)) {
+          currentBookmarks = resp.items;
+        }
+      }
+      if (callback) callback(resp);
     });
   }
 

@@ -75,6 +75,12 @@ Ativo por padrão e arquitetado em arquivo dedicado (`smart-clipboard.js`) por t
   - `Colar`: diferencia automaticamente pesquisas curtas/médias de buscadores (respeitando o limite técnico de 32 palavras do Google) de prompts elaborados e textos extensos/artigos (compreendidos já nas primeiras linhas sem custo de memória e oferecidos exclusivamente para ferramentas de IA, nunca em buscadores convencionais).
 - **Atalho Rápido (`Espaço 2x`), Colagem Não-Destrutiva e Memória de Análise**: Sem nenhum campo de texto focado, pressionar **Espaço duas vezes** aciona instantaneamente a sugestão exibida (ou sinaliza sutilmente quando há duas opções para escolha). Ao colar no buscador ou na IA, o texto já digitado é sempre preservado ao início sem envio automático, e apenas uma assinatura hash (`FNV-1a`) é salva para nunca repetir a mesma sugestão ou gravar textos copiados em disco.
 
+### 6. Coleções e Sincronização Inteligente de Pastas (Não-Destrutiva)
+Para organizar dezenas de favoritos sem poluir a barra nem alterar os favoritos originais do navegador, o módulo dedicado de **Coleções** (`collections.js`) combina curadoria visual com sincronização inteligente:
+- **Sincronização Automática com Pastas do Navegador**: Ativa por padrão no Edge e no Chrome (**Mais opções → Coleções → Sincronizar com suas pastas**, que ao ser desmarcada alterna para **Sincronizar somente "Barra de favoritos"**, sem as pastas), replica automaticamente as pastas de favoritos em Coleções coloridas na barra em modo estritamente *read-only* (jamais modifica ou move os favoritos reais do navegador).
+- **Personalização Inteligente sem Conflitos**: O usuário pode renomear uma coleção sincronizada, definir emoji e cor, reordenar itens ou mover favoritos entre coleções e para a barra do My New Tab — a sincronização reconhece cada personalização feita no My New Tab e nunca a desfaz quando novos sites são adicionados à pasta original (oferecendo também pausar/retomar a sincronização por coleção ou **Desfazer alterações (ressincronizar)** a qualquer momento). Se um site for desfavoritado no navegador, ele é removido imediatamente.
+- **Drag & Drop Fluido**: Permite criar coleções arrastando um favorito sobre outro, soltar favoritos diretamente sobre qualquer coleção na barra e reordenar livremente coleções e favoritos.
+
 
 
 ## Segurança Aplicada (Security by Design)
