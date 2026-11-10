@@ -677,6 +677,41 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === "readClipboardFull") {
+    const handleReadFull = async () => {
+      if (!cachedSettings.smartClipboard) {
+        sendResponse({ ok: false, disabled: true });
+        return;
+      }
+      const ready = await ensureOffscreenDocument();
+      if (!ready) {
+        sendResponse({ ok: false });
+        return;
+      }
+      const expectedHash =
+        typeof request.expectedHash === "string" && CLIPBOARD_HASH_REGEX.test(request.expectedHash)
+          ? request.expectedHash
+          : "";
+      chrome.runtime.sendMessage(
+        {
+          target: "mnt-offscreen-clipboard",
+          action: "readClipboardFull",
+          expectedHash
+        },
+        (res) => {
+          if (chrome.runtime.lastError || !res || !res.ok || typeof res.text !== "string") {
+            sendResponse({ ok: false });
+            return;
+          }
+          sendResponse({ ok: true, text: res.text });
+        }
+      );
+    };
+    if (isCacheReady) handleReadFull();
+    else syncSettingsCache(handleReadFull);
+    return true;
+  }
+
   if (request.action === "markClipboardAnalyzed") {
     if (typeof request.hash === "string" && CLIPBOARD_HASH_REGEX.test(request.hash) && request.hash.length > 0) {
       cachedSettings.lastClipboardHash = request.hash;

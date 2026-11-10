@@ -1,9 +1,11 @@
 (function () {
   "use strict";
 
-  // Limite máximo absoluto lido do clipboard para evitar consumo excessivo de memória (100 KB)
-  const MAX_CLIPBOARD_LENGTH = 102400;
-  // Janela máxima de caracteres inspecionados para classificação (nunca analisa textos gigantes por inteiro)
+  // Limite máximo seguro para colagem sob demanda (5 MB — comporta livros/arquivos extensos sem risco de OOM)
+  const MAX_CLIPBOARD_LENGTH = 5242880;
+  // Acima de 64 KB, a análise trafega apenas o prefixo (1.5 KB) e só lê o texto integral se o usuário clicar em Colar/Code
+  const INLINE_CLIPBOARD_LIMIT = 65536;
+  // Janela máxima de caracteres inspecionados para classificação (nunca analisa textos/livros gigantes por inteiro)
   const ANALYSIS_HEAD_LIMIT = 1500;
   // Quantidade máxima de linhas iniciais avaliadas para detectar código-fonte
   const CODE_SAMPLE_MAX_LINES = 18;
@@ -102,8 +104,20 @@
           }
 
           const trimmedCheck = prefix.trim();
-          if (!trimmedCheck && !raw.trim()) {
+          if (!trimmedCheck && !raw.slice(0, ANALYSIS_HEAD_LIMIT).trim()) {
             sendResponse({ ok: true, empty: true });
+            return false;
+          }
+
+          // Textos muito grandes (> 64 KB): envia apenas o recorte inicial (1.5 KB) para classificação instantânea
+          if (totalLength > INLINE_CLIPBOARD_LIMIT) {
+            sendResponse({
+              ok: true,
+              headText: raw.slice(0, ANALYSIS_HEAD_LIMIT),
+              deferredFull: true,
+              totalLength,
+              hash
+            });
             return false;
           }
 
@@ -112,6 +126,38 @@
             text: raw,
             totalLength,
             hash
+          });
+        } catch (err) {
+          sandboxEl.value = "";
+          sendResponse({ ok: false });
+        }
+        return false;
+      }
+
+      if (request.action === "readClipboardFull") {
+        try {
+          sandboxEl.value = "";
+          sandboxEl.focus();
+          const ok = document.execCommand("paste");
+          const raw = ok ? sandboxEl.value : "";
+          sandboxEl.value = "";
+
+          if (!raw || typeof raw !== "string" || raw.length === 0 || raw.length > MAX_CLIPBOARD_LENGTH) {
+            sendResponse({ ok: false });
+            return false;
+          }
+
+          if (request.expectedHash) {
+            const currentHash = computeClipboardHash(raw);
+            if (currentHash !== request.expectedHash) {
+              sendResponse({ ok: false });
+              return false;
+            }
+          }
+
+          sendResponse({
+            ok: true,
+            text: raw.trim()
           });
         } catch (err) {
           sandboxEl.value = "";
@@ -218,7 +264,7 @@
   // Detecta URL pura ou contida em um texto curto/médio
   function detectUrlSuggestion(headText) {
     const trimmed = headText.trim();
-    if (!trimmed || trimmed.length > 600) return null;
+    if (!trimmed || trimmed.length > 2000) return null;
 
     // Caso 1: O texto copiado inteiro é uma única URL (com ou sem https://)
     if (!/\s/.test(trimmed)) {
@@ -235,9 +281,10 @@
       }
     }
 
-    // Caso 2: URL contida dentro de um texto/mensagem curta (até 4 linhas)
+    // Caso 2: URL contida dentro de um texto/mensagem curta (até 3 linhas e <= 360 chars)
+    if (trimmed.length > 360) return null;
     const lines = trimmed.split(/\r?\n/);
-    if (lines.length > 4) return null;
+    if (lines.length > 3) return null;
 
     // Procura primeiro por https:// ou http:// ou www.
     const explicitMatch = trimmed.match(/\b((?:https?:\/\/|www\.)[^\s<>"{}|\\^`[\]]+)/i);
@@ -327,11 +374,17 @@
 
     // 2. SQL (DML, DDL, CTEs e fragmentos multi-cláusula, ignorando comentários iniciais -- ou /* */)
     const sqlClean = sample.replace(/^\s*(?:--[^\n]*\n\s*|\/\*[\s\S]*?\*\/\s*)+/, "");
+    const looksLikeEnglishProseSelect =
+      /^SELECT\s+(?:the|a|an|your|our|this|that|these|those|any|one|all\s+the)\b/i.test(sqlClean) ||
+      /\bFROM\s+(?:the|a|an|your|our|this|that|these|those)\b/i.test(sqlClean) ||
+      /^UPDATE\s+(?:the|a|an|your|our|this|that)\b/i.test(sqlClean);
+
     if (
-      /^(?:WITH\s+[a-zA-Z_]\w*\s+AS\s*\(|SELECT\s+[\s\S]+?\bFROM\b|SELECT\s+(?:DISTINCT\s+|TOP\s+\d+\s+)?[\w*(),\s.'"+-]+\s*;|INSERT\s+(?:IGNORE\s+|OR\s+REPLACE\s+)?INTO\s+\S+|UPDATE\s+\S+\s+SET\s+|DELETE\s+FROM\s+\S+|MERGE\s+INTO\s+\S+|CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+|UNIQUE\s+)?(?:TABLE|VIEW|INDEX|DATABASE|SCHEMA|FUNCTION|PROCEDURE|TRIGGER|SEQUENCE|TYPE)\b|ALTER\s+(?:TABLE|VIEW|DATABASE|SCHEMA|INDEX)\b|DROP\s+(?:TABLE|VIEW|INDEX|DATABASE|SCHEMA|FUNCTION|PROCEDURE|TRIGGER)\b|TRUNCATE\s+TABLE\b)/i.test(sqlClean)
+      !looksLikeEnglishProseSelect &&
+      /^(?:WITH\s+[a-zA-Z_]\w*\s+AS\s*\(|SELECT\s+[\s\S]{1,240}?\bFROM\s+[a-zA-Z_`"\[]|SELECT\s+(?:DISTINCT\s+|TOP\s+\d+\s+)?[\w*(),\s.'"+-]+\s*;|INSERT\s+(?:IGNORE\s+|OR\s+REPLACE\s+)?INTO\s+[a-zA-Z_`"\[]\S*|UPDATE\s+[a-zA-Z_`"\[]\S*\s+SET\s+[a-zA-Z_`"\[]|DELETE\s+FROM\s+[a-zA-Z_`"\[]\S*|MERGE\s+INTO\s+\S+|CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+|UNIQUE\s+)?(?:TABLE|VIEW|INDEX|DATABASE|SCHEMA|FUNCTION|PROCEDURE|TRIGGER|SEQUENCE|TYPE)\b|ALTER\s+(?:TABLE|VIEW|DATABASE|SCHEMA|INDEX)\b|DROP\s+(?:TABLE|VIEW|INDEX|DATABASE|SCHEMA|FUNCTION|PROCEDURE|TRIGGER)\b|TRUNCATE\s+TABLE\b)/i.test(sqlClean)
     ) {
       score += 3;
-    } else {
+    } else if (!looksLikeEnglishProseSelect) {
       let sqlClauses = 0;
       if (/\b(?:INNER|LEFT|RIGHT|FULL|CROSS)?\s*JOIN\s+[a-zA-Z_`"\[]\S*\s+ON\b/i.test(sqlClean)) sqlClauses++;
       if (/\bWHERE\s+\S+\s*(?:=|<|>|!=|<>|\bIN\b|\bLIKE\b|\bILIKE\b|\bIS\b|\bBETWEEN\b)/i.test(sqlClean)) sqlClauses++;
@@ -348,12 +401,11 @@
     ) {
       score += 3;
     } else {
-      const cssPropRegex = /^\s*(?:--[a-zA-Z0-9_-]+|(?:display|position|top|right|bottom|left|width|height|min-width|max-width|min-height|max-height|margin(?:-(?:top|right|bottom|left))?|padding(?:-(?:top|right|bottom|left))?|border(?:-[a-z]+)*|background(?:-[a-z]+)*|color|font(?:-[a-z]+)*|line-height|letter-spacing|text-(?:align|decoration|transform|overflow)|flex(?:-[a-z]+)*|grid(?:-[a-z]+)*|align-items|justify-content|gap|opacity|z-index|overflow(?:-[xy])?|box-shadow|transform|transition|animation|cursor|pointer-events|user-select|backdrop-filter))\s*:\s*[^;\n]+;?\s*$/i;
+      const cssPropRegex = /^\s*(?:--[a-zA-Z0-9_-]+|(?:display|position|top|right|bottom|left|width|height|min-width|max-width|min-height|max-height|margin(?:-(?:top|right|bottom|left))?|padding(?:-(?:top|right|bottom|left))?|border(?:-[a-z]+)*|background(?:-[a-z]+)*|color|font(?:-[a-z]+)*|line-height|letter-spacing|text-(?:align|decoration|transform|overflow)|flex(?:-[a-z]+)*|grid(?:-[a-z]+)*|align-items|justify-content|gap|opacity|z-index|overflow(?:-[xy])?|box-shadow|transform|transition|animation|cursor|pointer-events|user-select|backdrop-filter))\s*:\s*[^;\n]+;\s*$/;
       const cssPropLines = trimmedLines.filter((l) => cssPropRegex.test(l));
       if (
         cssPropLines.length >= 2 ||
         (cssPropLines.length === 1 &&
-          /;\s*$/.test(cssPropLines[0]) &&
           /(?:\b\d+(?:px|rem|em|vh|vw|%|s|ms)\b|#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|var\(--|calc\(|linear-gradient\()/i.test(cssPropLines[0]))
       ) {
         score += 3;
@@ -364,8 +416,8 @@
     if (
       /^\s*(?:async\s+)?def\s+[a-zA-Z_]\w*\s*\([^)]*\)\s*(?:->\s*[^:\n]+)?\s*:/m.test(sample) ||
       /^\s*class\s+[A-Z_]\w*(?:\([^)]*\))?\s*:/m.test(sample) ||
-      /^\s*from\s+[a-zA-Z_.][\w.]*\s+import\s+[a-zA-Z_*(\w]/m.test(sample) ||
-      /^\s*import\s+[a-zA-Z_][\w.]*(?:\s+as\s+[a-zA-Z_]\w*)?\s*$/m.test(sample) ||
+      /^\s*from\s+[a-z_.][\w.]*\s+import\s+[a-zA-Z_*(\w]/m.test(sample) ||
+      /^\s*import\s+[a-z_][\w.]*(?:\s+as\s+[a-zA-Z_]\w*)?\s*$/m.test(sample) ||
       /\[[^\n\]]+\bfor\s+[a-zA-Z_]\w*\s+in\s+[^\n\]]+\]/.test(sample) ||
       /\bif\s+__name__\s*==\s*['"]__main__['"]/.test(sample)
     ) {
@@ -449,15 +501,21 @@
       }
     }
 
-    // Contagem de palavras-chave de programação distintas
-    const kwMatches = sample.match(
-      /\b(?:function|func|fn|def|lambda|const|let|var|val|mut|class|struct|interface|enum|trait|impl|record|namespace|package|module|import|export|require|include|using|return|yield|async|await|defer|public|private|protected|static|final|void|boolean|bool|int|int32|int64|uint|float|float64|double|String|println|printf|elif|elsif|elseif|try|catch|except|finally|throw|typeof|instanceof|sizeof|nullptr|undefined|None|nil)\b/g
+    // Contagem de palavras-chave de programação (protegida contra falsos positivos em artigos/livros em inglês)
+    const hasCodePunctuation = /[{};=\[\]<>]|[a-zA-Z_$]\w*\(/.test(sample);
+    const strictKwMatches = sample.match(
+      /\b(?:def|elif|elsif|elseif|fn|func|mut|println|printf|typeof|instanceof|sizeof|nullptr|undefined)\b/g
     );
-    if (kwMatches) {
-      const uniqueKws = new Set(kwMatches).size;
-      if (uniqueKws >= 3) score += 3;
-      else if (uniqueKws === 2) score += 2;
-      else score += 1;
+    if (strictKwMatches) {
+      score += strictKwMatches.length >= 2 ? 3 : 2;
+    } else if (hasCodePunctuation) {
+      const generalKwMatches = sample.match(
+        /\b(?:function|const|let|var|val|class|struct|interface|enum|trait|impl|namespace|package|module|import|export|return|yield|async|await|defer|public|private|protected|static|final|void|boolean|bool|int|int32|int64|uint|float|float64|double|String|try|catch|except|finally|throw|None|nil)\b/g
+      );
+      if (generalKwMatches) {
+        const uniqueKws = new Set(generalKwMatches).size;
+        score += uniqueKws >= 2 ? 2 : 1;
+      }
     }
 
     // Operadores típicos de linguagens de programação
@@ -465,12 +523,17 @@
       score += 2;
     }
 
-    // Delimitadores estruturais (; { } no fim da linha)
-    const linesEndingWithSemiOrBrace = trimmedLines.filter((l) => /[;{}]\s*$/.test(l)).length;
-    if (linesEndingWithSemiOrBrace >= 1) score += 1;
-    if (linesEndingWithSemiOrBrace >= 2) score += 2;
+    // Delimitadores estruturais ({ } no fim da linha, ou ; em linhas que não sejam tópicos de lista em texto corrido)
+    const codeTerminatedLines = trimmedLines.filter((l) => {
+      if (/[{}]\s*$/.test(l)) return true;
+      if (!/;\s*$/.test(l)) return false;
+      if (/^(?:[-•*–—]|\d+[.)]|[a-zA-Z][)])\s+/.test(l)) return false;
+      return /[()={}\[\].<>]|\b(?:return|break|continue|import|package|using|throw)\b/.test(l);
+    }).length;
+    if (codeTerminatedLines >= 1) score += 1;
+    if (codeTerminatedLines >= 2) score += 2;
 
-    if (/[{}\[\]();]/.test(sample) && /[`"'=<>]/.test(sample)) {
+    if (/[{}\[\]]/.test(sample) && /[`"'=<>]/.test(sample)) {
       score += 1;
     }
 
@@ -479,12 +542,12 @@
       score += 2;
     }
 
-    // Indentação real preservada em múltiplas linhas combinada com pontuação de código
+    // Indentação real preservada em múltiplas linhas combinada com sintaxe estrutural de código
     if (sampleRawLines.length >= 2) {
       const indentedCount = sampleRawLines.filter((l) => getLineIndentWidth(l) >= 2).length;
-      if (indentedCount >= 2 && /[{}();=<>:\[\]]/.test(sample)) {
+      if (indentedCount >= 2 && /[{};=<>]|(?:\b[a-zA-Z_$]\w*\()/.test(sample)) {
         score += 2;
-      } else if (indentedCount >= 1 && /[{}();=\[\]]/.test(sample)) {
+      } else if (indentedCount >= 1 && /[{};=\[\]]/.test(sample)) {
         score += 1;
       }
     }
@@ -601,13 +664,19 @@
   }
 
   // Função principal de classificação inteligente, rápida e segura
-  // Retorna um array de 1 ou 2 sugestões [{ category, label, preview, payload, isOverflowing }] ou null
-  function analyzeClipboardText(rawText, engineId, settings) {
+  // Inspeciona APENAS o prefixo (ANALYSIS_HEAD_LIMIT = 1500 chars) + tamanho total, sem varrer livros/textos gigantes por inteiro
+  function analyzeClipboardText(rawText, engineId, settings, meta) {
     if (typeof rawText !== "string" || !engineId) return null;
-    const totalLength = rawText.length;
+    const totalLength =
+      meta && typeof meta.totalLength === "number" && meta.totalLength > 0
+        ? meta.totalLength
+        : rawText.length;
     if (totalLength === 0 || totalLength > MAX_CLIPBOARD_LENGTH) return null;
 
-    // Recorta apenas o início do texto para inspeção rápida (jamais processa um artigo/código inteiro)
+    const isDeferred = Boolean(meta && meta.deferredFull);
+    const deferredHash = isDeferred && typeof meta.hash === "string" ? meta.hash : "";
+
+    // Recorta apenas o início do texto para inspeção rápida em O(1) (jamais processa um livro/código inteiro)
     const head = rawText.slice(0, ANALYSIS_HEAD_LIMIT);
     const trimmedHead = head.trim();
     if (trimmedHead.length < 2) return null;
@@ -626,11 +695,16 @@
 
     const looksLikeCode = detectCodeInHead(rawNonEmptyLines);
 
-    // 1. Verifica URL primeiro (se for um texto curto/médio sem aparência de bloco de código)
-    if (totalLength <= 600 && nonEmptyLines.length <= 4 && !looksLikeCode) {
-      const urlSuggestion = detectUrlSuggestion(trimmedHead);
-      if (urlSuggestion) {
-        return isCategoryEnabled("site", settings) ? [urlSuggestion] : null;
+    // 1. Verifica URL primeiro (URL pura sem espaços ou URL contida em mensagem curta, nunca em textos grandes)
+    if (!looksLikeCode) {
+      const isSinglePureUrlCandidate = totalLength <= 2000 && nonEmptyLines.length === 1 && !/\s/.test(trimmedHead);
+      const isShortMessageWithUrlCandidate = totalLength <= 360 && nonEmptyLines.length <= 3;
+      if (isSinglePureUrlCandidate || isShortMessageWithUrlCandidate) {
+        const urlCandidateText = isSinglePureUrlCandidate ? rawText.trim() : trimmedHead;
+        const urlSuggestion = detectUrlSuggestion(urlCandidateText);
+        if (urlSuggestion) {
+          return isCategoryEnabled("site", settings) ? [urlSuggestion] : null;
+        }
       }
     }
 
@@ -645,19 +719,15 @@
           category: "code",
           label: "Code",
           preview,
-          payload: rawText.trim(),
+          payload: isDeferred ? "" : rawText.trim(),
+          deferredFull: isDeferred,
+          deferredHash,
           isOverflowing
         }
       ];
     }
 
-    // 3. Descarte imediato nas primeiras linhas se for um artigo ou texto muito extenso
-    const paragraphs = trimmedHead.split(/\r?\n\s*\r?\n/).map((p) => p.trim()).filter(Boolean);
-    if (totalLength > 1100 || paragraphs.length > 3 || nonEmptyLines.length > 9) {
-      return null;
-    }
-
-    // 4. Verifica Endereço físico (puro ou dentro de mensagem curta)
+    // 3. Verifica Endereço físico (somente quando puro ou dentro de mensagem curta <= 300 caracteres)
     if (totalLength <= 300 && nonEmptyLines.length <= 3) {
       const addressSuggestion = detectAddressSuggestion(trimmedHead);
       if (addressSuggestion) {
@@ -665,14 +735,14 @@
       }
     }
 
-    // Contagem de palavras
-    const words = trimmedHead.split(/\s+/).filter(Boolean);
-    const wordCount = words.length;
-    if (wordCount === 0) return null;
+    // Contagem de palavras apenas sobre o prefixo inspecionado (custo O(1))
+    const headWords = trimmedHead.split(/\s+/).filter(Boolean);
+    const headWordCount = headWords.length;
+    if (headWordCount === 0) return null;
 
-    // 5. Verifica Palavra Única -> Cápsulas duplas: Dicionário + Colar (conforme categorias ativas)
-    if (wordCount === 1 && nonEmptyLines.length === 1) {
-      const rawToken = words[0];
+    // 4. Verifica Palavra Única (pode ser colada/consultada tanto em buscadores quanto em IAs)
+    if (totalLength <= 60 && headWordCount === 1 && nonEmptyLines.length === 1) {
+      const rawToken = headWords[0];
       // Rejeita tokens com sintaxe de código, caminhos ou URLs antes de limpar pontuação externa
       if (/[./:\\@()[\]{}<>;=_]/.test(rawToken)) {
         return null;
@@ -710,18 +780,25 @@
       return null;
     }
 
-    // 6. Verifica Pergunta / Pesquisa / Prompt ("colar")
+    // 5. Verifica Texto / Pergunta / Prompt / Textos Grandes ("Colar")
     if (!isCategoryEnabled("colar", settings)) {
       return null;
     }
 
+    // Ignora blobs contínuos sem espaços (ex: tokens JWT, hashes gigantes ou base64 puro)
+    if (headWordCount < 2 || !/[a-zA-ZÀ-ÿ]/.test(trimmedHead)) {
+      return null;
+    }
+
+    const headParagraphs = trimmedHead.split(/\r?\n\s*\r?\n/).map((p) => p.trim()).filter(Boolean);
+
     if (isSearchEngine) {
-      // Buscadores convencionais: pesquisas curtas/médias (2 a 32 palavras, 1 parágrafo, sem prompts de IA)
+      // Buscadores convencionais: somente pesquisas curtas/médias (2 a 32 palavras, 1 parágrafo, <= 220 chars, sem prompts/textos grandes)
       if (
-        paragraphCountOrLinesOkForSearch(paragraphs, nonEmptyLines, totalLength) &&
-        wordCount >= 2 &&
-        wordCount <= GOOGLE_MAX_WORDS &&
-        !isAiSpecificPrompt(trimmedHead, wordCount, paragraphs.length)
+        paragraphCountOrLinesOkForSearch(headParagraphs, nonEmptyLines, totalLength) &&
+        headWordCount >= 2 &&
+        headWordCount <= GOOGLE_MAX_WORDS &&
+        !isAiSpecificPrompt(trimmedHead, headWordCount, headParagraphs.length)
       ) {
         const { preview, isOverflowing } = formatSingleLinePreview(trimmedHead, 34);
         return [
@@ -738,27 +815,20 @@
     }
 
     if (isAiEngine) {
-      // IAs: aceita desde pesquisas estilo Google até perguntas/prompts de até 3 parágrafos médios
-      const eachParagraphMedium = paragraphs.every((p) => p.length <= 480);
-      if (
-        paragraphs.length >= 1 &&
-        paragraphs.length <= 3 &&
-        eachParagraphMedium &&
-        wordCount >= 2 &&
-        wordCount <= 165 &&
-        totalLength <= 1100
-      ) {
-        const { preview, isOverflowing } = formatSingleLinePreview(trimmedHead, 34);
-        return [
-          {
-            category: "colar",
-            label: "Colar",
-            preview,
-            payload: rawText.trim(),
-            isOverflowing
-          }
-        ];
-      }
+      // Ferramentas de IA: aceita perguntas curtas, prompts elaborados e também textos grandes/artigos/livros
+      // compreendidos já nas primeiras linhas (head), sem precisar analisar o texto inteiro
+      const { preview, isOverflowing } = formatSingleLinePreview(trimmedHead, 34);
+      return [
+        {
+          category: "colar",
+          label: "Colar",
+          preview,
+          payload: isDeferred ? "" : rawText.trim(),
+          deferredFull: isDeferred,
+          deferredHash,
+          isOverflowing: isOverflowing || totalLength > 34
+        }
+      ];
     }
 
     return null;
@@ -958,24 +1028,47 @@
       }
 
       let inserted = false;
-      try {
-        inserted = document.execCommand("insertText", false, payload);
-      } catch (e) {
-        inserted = false;
-      }
-
-      if (!inserted) {
+      const dispatchSyntheticPaste = (textChunk) => {
         try {
           const dt = new DataTransfer();
-          dt.setData("text/plain", payload);
+          dt.setData("text/plain", textChunk);
           const pasteEvent = new ClipboardEvent("paste", {
             bubbles: true,
             cancelable: true,
             clipboardData: dt
           });
           inputEl.dispatchEvent(pasteEvent);
-          inserted = true;
-        } catch (e) {}
+          return pasteEvent.defaultPrevented;
+        } catch (e) {
+          return false;
+        }
+      };
+
+      // Para textos grandes (> 15 KB), prioriza evento sintético de paste nos editores rich-text (ProseMirror/Quill)
+      // evitando criar milhares de nós DOM síncronos via insertText, sem perder o texto já digitado
+      if (textToPaste.length > 15000) {
+        if (separator) {
+          try {
+            document.execCommand("insertText", false, separator);
+          } catch (e) {}
+        }
+        inserted = dispatchSyntheticPaste(textToPaste);
+        if (!inserted) {
+          try {
+            inserted = document.execCommand("insertText", false, textToPaste);
+          } catch (e) {
+            inserted = false;
+          }
+        }
+      } else {
+        try {
+          inserted = document.execCommand("insertText", false, payload);
+        } catch (e) {
+          inserted = false;
+        }
+        if (!inserted) {
+          inserted = dispatchSyntheticPaste(payload);
+        }
       }
 
       // Posiciona o cursor ao final após a inserção
@@ -1038,14 +1131,28 @@
         settings.lastClipboardHash = hash;
         chrome.runtime.sendMessage({ action: "markClipboardAnalyzed", hash });
 
-        if (typeof response.text !== "string") return;
+        if (response.tooLarge) return;
+
+        const sourceSample =
+          typeof response.text === "string"
+            ? response.text
+            : typeof response.headText === "string"
+              ? response.headText
+              : null;
+        if (!sourceSample) return;
+
+        const meta = {
+          totalLength: typeof response.totalLength === "number" ? response.totalLength : sourceSample.length,
+          deferredFull: Boolean(response.deferredFull),
+          hash
+        };
 
         const runAnalysis = () => {
           if (!isRunning) return;
           const currentCfg = getSettings();
           if (!currentCfg || !currentCfg.smartClipboard) return;
           const engineId = getEngine();
-          const suggestions = analyzeClipboardText(response.text, engineId, currentCfg);
+          const suggestions = analyzeClipboardText(sourceSample, engineId, currentCfg, meta);
           if (suggestions && suggestions.length > 0 && typeof onSuggestion === "function") {
             onSuggestion(suggestions);
           }

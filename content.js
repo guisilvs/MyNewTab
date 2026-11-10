@@ -942,7 +942,8 @@
       capsuleText.classList.add("fade-end");
     }
 
-    const tooltipPreview = String(item.payload || "").replace(/\s+/g, " ").trim().slice(0, 140);
+    const tooltipSource = item.payload || item.preview || "";
+    const tooltipPreview = String(tooltipSource).replace(/\s+/g, " ").trim().slice(0, 140);
     capsuleMain.title = `${item.label}: ${tooltipPreview}`;
 
     capsuleMain.appendChild(capsuleCat);
@@ -1067,7 +1068,17 @@
 
     if (suggestion.category === "colar" || suggestion.category === "code") {
       const engine = detectCurrentEngine();
-      api.pasteIntoEngineInput(suggestion.payload, engine);
+      if (suggestion.deferredFull && suggestion.deferredHash) {
+        chrome.runtime.sendMessage(
+          { action: "readClipboardFull", expectedHash: suggestion.deferredHash },
+          (res) => {
+            if (chrome.runtime.lastError || !res || !res.ok || typeof res.text !== "string") return;
+            api.pasteIntoEngineInput(res.text, engine);
+          }
+        );
+      } else {
+        api.pasteIntoEngineInput(suggestion.payload, engine);
+      }
     }
   }
 
