@@ -1,5 +1,7 @@
 (function () {
   if (window.top !== window.self) return;
+  if (window.__MNT_CONTENT_INITIALIZED__) return;
+  window.__MNT_CONTENT_INITIALIZED__ = true;
 
   const LOCAL_THEME_KEY = "mnt_cached_theme_v1";
   const RGBA_COLOR_REGEX = /^rgba\((\d{1,3}),\s*(\d{1,3}),\s*(\d{1,3}),\s*([01](?:\.\d+)?)\)$/;
@@ -34,6 +36,48 @@
     if (host.includes("yahoo.")) return "yahoo";
     if (host.includes("brave.")) return "brave";
     return null;
+  }
+
+  function stripWww(hostname) {
+    return String(hostname || "")
+      .trim()
+      .toLowerCase()
+      .replace(/^www\./, "");
+  }
+
+  function getActiveCustomSite() {
+    if (!currentSettings || typeof currentSettings.engine !== "string") return null;
+    if (!currentSettings.engine.startsWith("custom_")) return null;
+    if (!Array.isArray(currentSettings.customSites)) return null;
+    return currentSettings.customSites.find((s) => s && s.id === currentSettings.engine) || null;
+  }
+
+  function isCustomHomeActive() {
+    return Boolean(getActiveCustomSite());
+  }
+
+  function doesHostMatchDomain(pageHost, targetDomain) {
+    if (!pageHost || !targetDomain) return false;
+    const p = stripWww(pageHost);
+    const t = stripWww(targetDomain);
+    if (!p || !t) return false;
+    return p === t || p.endsWith(`.${t}`);
+  }
+
+  function detectActiveHomeForPage() {
+    if (isCustomHomeActive()) {
+      const site = getActiveCustomSite();
+      if (!site) return null;
+      const host = window.location.hostname;
+      if (
+        doesHostMatchDomain(host, site.host) ||
+        (site.resolvedHost && doesHostMatchDomain(host, site.resolvedHost))
+      ) {
+        return site.id;
+      }
+      return null;
+    }
+    return detectCurrentEngine();
   }
 
   function isSearchHomePage() {
@@ -98,7 +142,7 @@
 
   // Lê o tema memorizado anteriormente (0ms via localStorage ou fallback do storage da extensão)
   function getMemorizedTheme() {
-    const engine = detectCurrentEngine();
+    const engine = detectActiveHomeForPage();
     try {
       const raw = localStorage.getItem(LOCAL_THEME_KEY);
       if (raw) {
@@ -120,7 +164,7 @@
   // Memoriza o tema validado para que a próxima abertura já carregue na cor certa
   function memorizeTheme(themeData) {
     if (!isValidThemeData(themeData)) return;
-    const engine = detectCurrentEngine();
+    const engine = detectActiveHomeForPage();
     try {
       localStorage.setItem(LOCAL_THEME_KEY, JSON.stringify(themeData));
     } catch (e) {}
@@ -138,9 +182,13 @@
   const ICONS = {
     folder: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1.5 3.5C1.5 2.67157 2.17157 2 3 2H6.17157C6.70201 2 7.21071 2.21071 7.58579 2.58579L8.41421 3.41421C8.78929 3.78929 9.29799 4 9.82843 4H13C13.8284 4 14.5 4.67157 14.5 5.5V12.5C14.5 13.3284 13.8284 14 13 14H3C2.17157 14 1.5 13.3284 1.5 12.5V3.5Z" fill="#F5B942" stroke="#D99B26" stroke-width="0.8"/></svg>`,
     more: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`,
+    chevronLeft: `<svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M7.5 2.5L4 6L7.5 9.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     chevronRight: `<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M4.5 2.25L8.25 6L4.5 9.75" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>`,
     check: `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5L6.5 11.5L12.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-    starEdit: `<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.5L9.85 5.25L14 5.85L11 8.77L11.7 12.9L8 10.95L4.3 12.9L5 8.77L2 5.85L6.15 5.25L8 1.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>`
+    starEdit: `<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.5L9.85 5.25L14 5.85L11 8.77L11.7 12.9L8 10.95L4.3 12.9L5 8.77L2 5.85L6.15 5.25L8 1.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>`,
+    plus: `<svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 2.5V11.5M2.5 7H11.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
+    arrowRight: `<svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M3 7H11M7.5 3.5L11 7L7.5 10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    close: `<svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M3 3L9 9M9 3L3 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
   };
 
   chrome.runtime.sendMessage({ action: "initData" }, (response) => {
@@ -152,16 +200,52 @@
     evaluateActivation();
   });
 
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg && msg.action === "bookmarksUpdated" && ui) {
+  chrome.runtime.onMessage.addListener((msg, sender) => {
+    if (!sender || sender.id !== chrome.runtime.id || !msg) return;
+    if (msg.action === "bookmarksUpdated" && ui) {
       currentBookmarks = msg.items || [];
       renderBookmarksList();
+      if (ui.collectionsController) {
+        ui.collectionsController.onExternalDataUpdated({ bookmarksChanged: true });
+      }
+    }
+    if (msg.action === "settingsUpdated" && msg.settings) {
+      currentSettings = { ...currentSettings, ...msg.settings };
+      evaluateActivation();
+      if (ui) {
+        if (!currentSettings.smartClipboard) {
+          hideClipboardSuggestion();
+        }
+        if (ui.clipboardController) {
+          ui.clipboardController.syncWithSettings();
+        }
+        if (ui.settingsMenu.classList.contains("clipboard-screen")) {
+          if (currentSettings.smartClipboard) {
+            renderClipboardSettingsScreen();
+          } else {
+            renderSettingsMenu();
+          }
+        } else if (
+          ui.settingsMenu.classList.contains("open") &&
+          !ui.settingsMenu.classList.contains("collections-screen") &&
+          !ui.isEditingCustomSiteUrl
+        ) {
+          const keepEngineSubmenuOpen = Boolean(
+            ui.settingsMenu.querySelector(".engine-home-row.open")
+          );
+          renderSettingsMenu(keepEngineSubmenuOpen);
+        }
+        renderContextMenu();
+        if (ui.collectionsController) {
+          ui.collectionsController.onExternalDataUpdated({ settingsChanged: true });
+        }
+      }
     }
   });
 
   function evaluateActivation() {
-    const activeEngine = detectCurrentEngine();
-    if (!currentSettings || activeEngine !== currentSettings.engine) {
+    const activeEngine = detectActiveHomeForPage();
+    if (!currentSettings || !activeEngine || activeEngine !== currentSettings.engine) {
       destroyBar();
       return;
     }
@@ -228,6 +312,11 @@
         --menu-border: rgba(0, 0, 0, 0.12);
         --menu-shadow: 0 8px 24px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.08);
         --divider: rgba(0, 0, 0, 0.08);
+        --capsule-bg: rgba(255, 255, 255, 0.96);
+        --capsule-border-grad: linear-gradient(135deg, #2563eb 0%, #0284c7 52%, #06b6d4 100%);
+        --capsule-glow: 0 2px 10px rgba(14, 165, 233, 0.16), 0 1px 3px rgba(37, 99, 235, 0.10);
+        --capsule-glow-hover: 0 3px 14px rgba(14, 165, 233, 0.25), 0 1px 4px rgba(37, 99, 235, 0.16);
+        --capsule-cat-color: #0284c7;
       }
 
       :host([data-theme="dark"]) {
@@ -241,6 +330,11 @@
         --menu-border: rgba(255, 255, 255, 0.14);
         --menu-shadow: 0 8px 28px rgba(0, 0, 0, 0.50), 0 2px 6px rgba(0, 0, 0, 0.35);
         --divider: rgba(255, 255, 255, 0.10);
+        --capsule-bg: rgba(19, 24, 32, 0.95);
+        --capsule-border-grad: linear-gradient(135deg, #3b82f6 0%, #0ea5e9 52%, #14b8a6 100%);
+        --capsule-glow: 0 2px 12px rgba(14, 165, 233, 0.22), 0 0 6px rgba(20, 184, 166, 0.12);
+        --capsule-glow-hover: 0 3px 16px rgba(14, 165, 233, 0.32), 0 0 8px rgba(20, 184, 166, 0.18);
+        --capsule-cat-color: #38bdf8;
       }
 
       .bar-wrapper {
@@ -288,6 +382,168 @@
         flex: 1;
         height: 100%;
         padding-right: 6px;
+        opacity: 1;
+        transform: scale(1);
+        transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+
+      .bar-wrapper.has-suggestion .bookmarks-strip {
+        opacity: 0;
+        pointer-events: none;
+        transform: scale(0.99);
+      }
+
+      .smart-clipboard-layer {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 38px;
+        right: 38px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        pointer-events: none;
+        opacity: 0;
+        transform: translateY(-2px) scale(0.97);
+        transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+
+      .bar-wrapper.has-suggestion .smart-clipboard-layer {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+
+      .smart-capsule {
+        display: inline-flex;
+        align-items: center;
+        height: 24px;
+        max-width: min(460px, calc(100vw - 96px));
+        border-radius: 999px;
+        border: 1px solid transparent;
+        background: linear-gradient(var(--capsule-bg), var(--capsule-bg)) padding-box, var(--capsule-border-grad) border-box;
+        box-shadow: var(--capsule-glow);
+        padding: 0 4px 0 10px;
+        gap: 4px;
+        box-sizing: border-box;
+        pointer-events: none;
+        transition: box-shadow 0.18s ease, transform 0.15s ease, opacity 0.15s ease;
+      }
+
+      .smart-clipboard-layer.dual-capsules .smart-capsule {
+        max-width: min(300px, calc((100vw - 108px) / 2));
+      }
+
+      .bar-wrapper.has-suggestion .smart-capsule {
+        pointer-events: auto;
+      }
+
+      .smart-capsule:hover {
+        box-shadow: var(--capsule-glow-hover);
+      }
+
+      @keyframes capsuleChooseBlink {
+        0%, 100% {
+          opacity: 1;
+          transform: scale(1);
+          box-shadow: var(--capsule-glow);
+        }
+        22% {
+          opacity: 0.42;
+          transform: scale(1.035);
+          box-shadow: var(--capsule-glow-hover);
+        }
+        50% {
+          opacity: 1;
+          transform: scale(1);
+          box-shadow: var(--capsule-glow);
+        }
+        76% {
+          opacity: 0.42;
+          transform: scale(1.035);
+          box-shadow: var(--capsule-glow-hover);
+        }
+      }
+
+      .smart-capsule.choose-blink {
+        animation: capsuleChooseBlink 0.52s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+
+      .capsule-main {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        height: 100%;
+        padding: 0;
+        margin: 0;
+        border: none;
+        background: transparent;
+        color: var(--text-color);
+        font-family: var(--mnt-font);
+        font-size: 12px;
+        cursor: pointer;
+        overflow: hidden;
+        min-width: 0;
+      }
+
+      .capsule-cat {
+        font-weight: 600;
+        font-size: 11px;
+        color: var(--capsule-cat-color);
+        letter-spacing: 0.01em;
+        flex-shrink: 0;
+        line-height: 1;
+      }
+
+      .capsule-sep {
+        width: 1px;
+        height: 12px;
+        background-color: var(--divider);
+        flex-shrink: 0;
+      }
+
+      .capsule-text {
+        color: var(--text-color);
+        font-size: 12px;
+        font-weight: 400;
+        white-space: nowrap;
+        overflow: hidden;
+        max-width: 240px;
+        line-height: 1.2;
+        margin-right: 4px;
+      }
+
+      .smart-clipboard-layer.dual-capsules .capsule-text {
+        max-width: 155px;
+      }
+
+      .capsule-text.fade-end {
+        margin-right: 0;
+        padding-right: 6px;
+        -webkit-mask-image: linear-gradient(to right, #000 66%, transparent 100%);
+        mask-image: linear-gradient(to right, #000 66%, transparent 100%);
+      }
+
+      .capsule-close {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        padding: 0;
+        margin: 0;
+        border: none;
+        border-radius: 999px;
+        background: transparent;
+        color: var(--text-muted);
+        cursor: pointer;
+        flex-shrink: 0;
+        transition: background-color 0.12s ease, color 0.12s ease;
+      }
+
+      .capsule-close:hover {
+        background-color: var(--hover-bg);
+        color: var(--text-color);
       }
 
       .bookmarks-strip::-webkit-scrollbar {
@@ -315,7 +571,7 @@
         font-weight: 400;
         font-style: normal;
         letter-spacing: normal;
-        line-height: 1;
+        line-height: 1.35;
       }
 
       .item:hover, .item.active {
@@ -337,6 +593,7 @@
         overflow: hidden;
         text-overflow: ellipsis;
         font-family: var(--mnt-font);
+        line-height: 1.35;
       }
 
       .more-btn {
@@ -460,6 +717,7 @@
         min-width: 215px;
         background-color: var(--menu-bg);
         backdrop-filter: blur(24px) saturate(180%);
+        -webkit-backdrop-filter: blur(24px) saturate(180%);
         border: 1px solid var(--menu-border);
         border-radius: 8px;
         box-shadow: var(--menu-shadow);
@@ -469,9 +727,198 @@
         font-family: var(--mnt-font);
       }
 
+      .submenu::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        right: -8px;
+        width: 10px;
+      }
+
+      .submenu.submenu-stack {
+        min-width: 232px;
+        background: transparent;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        border: none;
+        box-shadow: none;
+        padding: 0;
+        gap: 6px;
+      }
+
+      .submenu-card {
+        background-color: var(--menu-bg);
+        backdrop-filter: blur(24px) saturate(180%);
+        -webkit-backdrop-filter: blur(24px) saturate(180%);
+        border: 1px solid var(--menu-border);
+        border-radius: 8px;
+        box-shadow: var(--menu-shadow);
+        padding: 4px;
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
+        width: 100%;
+      }
+
       .menu-row.has-submenu:hover > .submenu,
       .menu-row.has-submenu.open > .submenu {
         display: flex;
+      }
+
+      .menu-row.disabled-row {
+        opacity: 0.38;
+        cursor: default;
+      }
+
+      .menu-row.disabled-row:hover {
+        background-color: transparent;
+      }
+
+      .custom-site-form {
+        display: none;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 6px 4px 10px;
+        box-sizing: border-box;
+      }
+
+      .custom-site-form.open {
+        display: flex;
+      }
+
+      .custom-site-input {
+        flex: 1;
+        min-width: 0;
+        height: 26px;
+        padding: 0 8px;
+        border-radius: 5px;
+        border: 1px solid var(--menu-border);
+        background-color: var(--hover-bg);
+        color: var(--text-color);
+        font-family: var(--mnt-font);
+        font-size: 12px;
+        outline: none;
+        box-sizing: border-box;
+        user-select: text;
+        transition: border-color 0.14s ease, background-color 0.14s ease;
+      }
+
+      .custom-site-input:focus {
+        border-color: #3b82f6;
+        background-color: transparent;
+      }
+
+      .custom-site-input::placeholder {
+        color: var(--text-muted);
+        opacity: 0.85;
+      }
+
+      .custom-site-input.invalid {
+        border-color: #ef4444;
+      }
+
+      .custom-site-submit {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        padding: 0;
+        border-radius: 5px;
+        border: 1px solid var(--menu-border);
+        background-color: var(--hover-bg);
+        color: var(--text-color);
+        cursor: pointer;
+        flex-shrink: 0;
+        transition: background-color 0.12s ease;
+      }
+
+      .custom-site-submit:hover {
+        background-color: var(--active-bg);
+      }
+
+      .custom-sites-list {
+        display: flex;
+        flex-direction: column;
+        max-height: min(190px, calc(100vh - 380px));
+        overflow-y: auto;
+        scrollbar-width: thin;
+      }
+
+      .custom-sites-list:empty {
+        display: none;
+      }
+
+      .custom-site-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 30px;
+        padding: 0 4px 0 0;
+        border-radius: 5px;
+        box-sizing: border-box;
+        width: 100%;
+      }
+
+      .custom-site-row:hover {
+        background-color: var(--hover-bg);
+      }
+
+      .custom-site-select {
+        flex: 1;
+        min-width: 0;
+        height: 30px;
+        padding: 0 4px 0 10px;
+        border: none;
+        background: transparent;
+        color: var(--text-color);
+        font-family: var(--mnt-font);
+        font-size: 12.5px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .custom-site-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .custom-site-delete {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        padding: 0;
+        border: none;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--text-muted);
+        opacity: 0.72;
+        cursor: pointer;
+        flex-shrink: 0;
+        transition: background-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
+      }
+
+      .custom-site-delete:hover {
+        background-color: var(--active-bg);
+        color: var(--text-color);
+        opacity: 1;
+      }
+
+      .menu-row.sub-setting-row {
+        font-size: 12px;
+        min-height: 28px;
+        opacity: 0.92;
+      }
+
+      .menu-row.sub-setting-row .menu-row-left {
+        padding-left: 8px;
       }
 
       .menu-row.menu-row-about {
@@ -502,7 +949,44 @@
       .about-author {
         font-size: 11.5px;
         color: var(--text-muted);
+        padding: 2px 10px 6px;
+        user-select: none;
       }
+
+      .fluent-menu.clipboard-screen {
+        width: 326px;
+        min-width: 296px;
+        max-width: calc(100vw - 16px);
+        box-sizing: border-box;
+      }
+
+      .menu-section-title {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+        padding: 5px 10px 2px;
+        user-select: none;
+        letter-spacing: 0.01em;
+      }
+
+      .shortcut-badge {
+        display: inline-flex;
+        align-items: center;
+        height: 19px;
+        padding: 0 6px;
+        border-radius: 4px;
+        border: 1px solid var(--menu-border);
+        background-color: var(--hover-bg);
+        color: var(--text-muted);
+        font-family: var(--mnt-font);
+        font-size: 10.5px;
+        font-weight: 500;
+        line-height: 1;
+        flex-shrink: 0;
+        white-space: nowrap;
+      }
+
+      ${window.MNT_Collections ? window.MNT_Collections.getStyles() : ""}
     `;
 
     const wrapper = document.createElement("div");
@@ -527,6 +1011,9 @@
     const strip = document.createElement("div");
     strip.className = "bookmarks-strip";
 
+    const clipboardLayer = document.createElement("div");
+    clipboardLayer.className = "smart-clipboard-layer";
+
     const moreBtn = document.createElement("button");
     moreBtn.className = "more-btn";
     moreBtn.title = "Mais opções";
@@ -542,6 +1029,7 @@
     folderDropdown.className = "fluent-menu";
 
     wrapper.appendChild(strip);
+    wrapper.appendChild(clipboardLayer);
     wrapper.appendChild(moreBtn);
 
     shadow.appendChild(style);
@@ -556,12 +1044,22 @@
       pageStyle,
       wrapper,
       strip,
+      clipboardLayer,
       moreBtn,
       settingsMenu,
       contextMenu,
       folderDropdown,
       isHoverRevealed: false,
       isMenuOpen: false,
+      isCollectionOverlayOpen: false,
+      isEditingCustomSiteUrl: false,
+      isSuggestionRevealed: false,
+      activeSuggestions: [],
+      suggestionTimer: null,
+      suggestionDeadline: 0,
+      suggestionRemainingMs: 0,
+      clipboardController: null,
+      collectionsController: null,
       appliedTheme: memorized ? memorized.theme : null,
       appliedBgBar: memorized ? memorized.bgBar : null,
       cleanupFns: []
@@ -583,19 +1081,419 @@
       });
     });
 
+    setupCollections();
     renderBookmarksList();
     renderSettingsMenu();
     renderContextMenu();
     setupInteractions();
+    setupSmartClipboard();
     setupThemeAndColorSync();
     injectSpeculationRules();
+  }
+
+  function setupCollections() {
+    if (!ui || !window.MNT_Collections) return;
+
+    ui.collectionsController = window.MNT_Collections.createController({
+      shadow: ui.shadow,
+      host: ui.host,
+      strip: ui.strip,
+      settingsMenu: ui.settingsMenu,
+      checkIconSvg: ICONS.check,
+      getSettings: () => currentSettings,
+      getBookmarks: () => currentBookmarks,
+      ensureBarBookmarkNodes: (nodes) => {
+        if (!Array.isArray(nodes) || nodes.length === 0) return;
+        const existingUrls = new Set();
+        currentBookmarks.forEach((b) => {
+          if (b && b.url) {
+            try {
+              existingUrls.add(new URL(b.url).toString());
+            } catch (e) {
+              existingUrls.add(b.url);
+            }
+          }
+        });
+        nodes.forEach((n) => {
+          if (!n || !n.url || !isSafeUrl(n.url)) return;
+          let norm;
+          try {
+            norm = new URL(n.url).toString();
+          } catch (e) {
+            return;
+          }
+          if (!existingUrls.has(norm)) {
+            existingUrls.add(norm);
+            currentBookmarks.push({
+              id: String(n.id || `bm_${Date.now().toString(36)}`),
+              title: String(n.title || ""),
+              url: norm
+            });
+          }
+        });
+      },
+      applySyncResponse: (resp) => {
+        if (!resp || !resp.ok) return;
+        if (resp.settings) {
+          currentSettings = { ...currentSettings, ...resp.settings };
+        }
+        if (Array.isArray(resp.items)) {
+          currentBookmarks = resp.items;
+        }
+      },
+      saveSetting,
+      isSafeUrl,
+      getFaviconUrl,
+      closeHostMenus: closeHostMenusOnly,
+      onOverlayStateChange: (isOpen) => {
+        if (!ui) return;
+        ui.isCollectionOverlayOpen = Boolean(isOpen);
+        updateBarVisibilityState();
+      },
+      reRenderBar: renderBookmarksList,
+      reRenderSettingsMenu: renderSettingsMenu,
+      openSettingsPanel: () => {
+        if (!ui) return;
+        ui.settingsMenu.classList.remove("clipboard-screen");
+        ui.settingsMenu.style.top = "35px";
+        ui.settingsMenu.style.right = "8px";
+        ui.settingsMenu.style.left = "auto";
+        ui.settingsMenu.classList.add("open");
+        ui.moreBtn.classList.add("active");
+        ui.isMenuOpen = true;
+        updateBarVisibilityState();
+      },
+      onCollectionContextMenu: (col, e) => {
+        if (!ui) return;
+        closeAllMenus();
+        ui.collectionsController.renderCollectionContextMenu(ui.contextMenu, col, ICONS.check);
+        ui.contextMenu.style.top = `${Math.min(e.clientY, window.innerHeight - 210)}px`;
+        ui.contextMenu.style.left = `${Math.min(e.clientX, window.innerWidth - 250)}px`;
+        ui.contextMenu.classList.add("open");
+        ui.isMenuOpen = true;
+        updateBarVisibilityState();
+      }
+    });
+
+    ui.cleanupFns.push(() => {
+      if (ui?.collectionsController) {
+        ui.collectionsController.destroy();
+      }
+    });
+  }
+
+  function pauseSuggestionTimer() {
+    if (!ui || ui.activeSuggestions.length === 0 || !ui.suggestionTimer) return;
+    const remaining = Math.max(4000, ui.suggestionDeadline - Date.now());
+    ui.suggestionRemainingMs = remaining;
+    clearTimeout(ui.suggestionTimer);
+    ui.suggestionTimer = null;
+  }
+
+  function resumeSuggestionTimer() {
+    if (!ui || ui.activeSuggestions.length === 0 || ui.suggestionTimer) return;
+    const waitMs = Math.max(4000, ui.suggestionRemainingMs || 6000);
+    ui.suggestionDeadline = Date.now() + waitMs;
+    ui.suggestionTimer = setTimeout(() => {
+      hideClipboardSuggestion();
+    }, waitMs);
+  }
+
+  function createCapsuleElement(item, maxCharsThreshold) {
+    const capsule = document.createElement("div");
+    capsule.className = "smart-capsule";
+
+    const capsuleMain = document.createElement("button");
+    capsuleMain.className = "capsule-main";
+    capsuleMain.type = "button";
+
+    const capsuleCat = document.createElement("span");
+    capsuleCat.className = "capsule-cat";
+    capsuleCat.textContent = item.label;
+
+    const capsuleSep = document.createElement("span");
+    capsuleSep.className = "capsule-sep";
+
+    const capsuleText = document.createElement("span");
+    capsuleText.className = "capsule-text";
+    capsuleText.textContent = item.preview;
+    if (item.isOverflowing || (item.preview && item.preview.length > maxCharsThreshold)) {
+      capsuleText.classList.add("fade-end");
+    }
+
+    const tooltipSource = item.payload || item.preview || "";
+    const tooltipPreview = String(tooltipSource).replace(/\s+/g, " ").trim().slice(0, 140);
+    capsuleMain.title = `${item.label}: ${tooltipPreview}`;
+
+    capsuleMain.appendChild(capsuleCat);
+    capsuleMain.appendChild(capsuleSep);
+    capsuleMain.appendChild(capsuleText);
+
+    const capsuleClose = document.createElement("button");
+    capsuleClose.className = "capsule-close";
+    capsuleClose.type = "button";
+    capsuleClose.title = "Ignorar sugestão";
+    capsuleClose.innerHTML = ICONS.close;
+
+    capsuleMain.addEventListener("click", (e) => {
+      e.stopPropagation();
+      applyClipboardSuggestion(item);
+    });
+
+    capsuleClose.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hideClipboardSuggestion();
+    });
+
+    capsule.addEventListener("mouseenter", pauseSuggestionTimer);
+    capsule.addEventListener("mouseleave", resumeSuggestionTimer);
+
+    capsule.appendChild(capsuleMain);
+    capsule.appendChild(capsuleClose);
+    return capsule;
+  }
+
+  function showClipboardSuggestion(suggestionsInput) {
+    if (!ui || !suggestionsInput || !currentSettings?.smartClipboard) return;
+    const items = (Array.isArray(suggestionsInput) ? suggestionsInput : [suggestionsInput]).filter(Boolean);
+    if (items.length === 0) return;
+
+    if (ui.collectionsController && ui.collectionsController.isActivelyEditing()) return;
+    if (ui.collectionsController && ui.collectionsController.isViewOpen()) {
+      ui.collectionsController.closeAllCollectionOverlays();
+    }
+
+    clearTimeout(ui.suggestionTimer);
+    ui.activeSuggestions = items;
+    ui.isSuggestionRevealed = true;
+
+    ui.clipboardLayer.textContent = "";
+    const isDual = items.length > 1;
+    ui.clipboardLayer.classList.toggle("dual-capsules", isDual);
+
+    const fadeThreshold = isDual ? 16 : 20;
+    items.forEach((item) => {
+      ui.clipboardLayer.appendChild(createCapsuleElement(item, fadeThreshold));
+    });
+
+    ui.wrapper.classList.add("has-suggestion");
+    updateBarVisibilityState();
+
+    const durationMs = 15000;
+    ui.suggestionRemainingMs = durationMs;
+    ui.suggestionDeadline = Date.now() + durationMs;
+    ui.suggestionTimer = setTimeout(() => {
+      hideClipboardSuggestion();
+    }, durationMs);
+  }
+
+  function hideClipboardSuggestion() {
+    if (!ui) return;
+    clearTimeout(ui.suggestionTimer);
+    ui.suggestionTimer = null;
+    ui.suggestionDeadline = 0;
+    ui.suggestionRemainingMs = 0;
+    ui.activeSuggestions = [];
+    ui.isSuggestionRevealed = false;
+    ui.wrapper.classList.remove("has-suggestion");
+    ui.clipboardLayer.classList.remove("dual-capsules");
+    updateBarVisibilityState();
+  }
+
+  function blinkActiveCapsules() {
+    if (!ui || !ui.clipboardLayer) return;
+    const capsules = ui.clipboardLayer.querySelectorAll(".smart-capsule");
+    capsules.forEach((cap) => {
+      cap.classList.remove("choose-blink");
+      void cap.offsetWidth;
+      cap.classList.add("choose-blink");
+    });
+    if (ui.suggestionTimer) {
+      const minRemain = Math.max(6000, ui.suggestionDeadline - Date.now());
+      clearTimeout(ui.suggestionTimer);
+      ui.suggestionRemainingMs = minRemain;
+      ui.suggestionDeadline = Date.now() + minRemain;
+      ui.suggestionTimer = setTimeout(() => {
+        hideClipboardSuggestion();
+      }, minRemain);
+    }
+  }
+
+  function applyClipboardSuggestion(targetItem) {
+    if (!ui || ui.activeSuggestions.length === 0) return;
+    const suggestion = targetItem || ui.activeSuggestions[0];
+    if (!suggestion) return;
+    hideClipboardSuggestion();
+
+    const api = window.MNT_SmartClipboard;
+    if (!api) return;
+
+    if (suggestion.category === "site" || suggestion.category === "maps" || suggestion.category === "dict") {
+      const targetUrl = api.buildTargetUrl(suggestion, currentSettings);
+      if (!targetUrl || !isSafeUrl(targetUrl)) return;
+
+      const openMode = currentSettings?.clipboardOpenMode === "current_tab" ? "current_tab" : "new_tab";
+      if (openMode === "current_tab") {
+        window.location.href = targetUrl;
+      } else {
+        chrome.runtime.sendMessage({
+          action: "openClipboardUrl",
+          url: targetUrl,
+          openMode: "new_tab"
+        });
+      }
+      return;
+    }
+
+    if (suggestion.category === "colar" || suggestion.category === "code") {
+      const engine = detectActiveHomeForPage();
+      if (suggestion.deferredFull && suggestion.deferredHash) {
+        chrome.runtime.sendMessage(
+          { action: "readClipboardFull", expectedHash: suggestion.deferredHash },
+          (res) => {
+            if (chrome.runtime.lastError || !res || !res.ok || typeof res.text !== "string") return;
+            api.pasteIntoEngineInput(res.text, engine);
+          }
+        );
+      } else {
+        api.pasteIntoEngineInput(suggestion.payload, engine);
+      }
+    }
+  }
+
+  function isEditableTarget(el) {
+    if (!el || typeof el !== "object" || el.nodeType !== 1) return false;
+    const tag = (el.tagName || "").toUpperCase();
+    if (tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (tag === "INPUT") {
+      const type = (el.type || "text").toLowerCase();
+      const nonTextTypes = new Set([
+        "button",
+        "checkbox",
+        "color",
+        "file",
+        "hidden",
+        "image",
+        "radio",
+        "range",
+        "reset",
+        "submit"
+      ]);
+      return !nonTextTypes.has(type);
+    }
+    if (el.isContentEditable) return true;
+    const ce = typeof el.getAttribute === "function" ? el.getAttribute("contenteditable") : null;
+    if (ce === "" || ce === "true" || ce === "plaintext-only") return true;
+    const role = (typeof el.getAttribute === "function" ? el.getAttribute("role") || "" : "").toLowerCase();
+    if (role === "textbox" || role === "searchbox" || role === "combobox") return true;
+    return false;
+  }
+
+  function isAnyTextInputActive(e) {
+    if (ui?.collectionsController?.isActivelyEditing?.()) return true;
+    if (e && typeof e.composedPath === "function") {
+      const path = e.composedPath();
+      for (let i = 0; i < path.length; i++) {
+        if (isEditableTarget(path[i])) return true;
+      }
+    }
+    let active = document.activeElement;
+    while (active) {
+      if (isEditableTarget(active)) return true;
+      active = active.shadowRoot ? active.shadowRoot.activeElement : null;
+    }
+    if (isEditableTarget(ui?.shadow?.activeElement)) return true;
+    return false;
+  }
+
+  function setupSmartClipboard() {
+    if (!ui || !window.MNT_SmartClipboard) return;
+
+    let lastSpacePressAt = 0;
+
+    const onGlobalKeyDown = (e) => {
+      if (
+        !ui ||
+        !currentSettings?.smartClipboard ||
+        currentSettings?.clipboardShortcut === false ||
+        !Array.isArray(ui.activeSuggestions) ||
+        ui.activeSuggestions.length === 0 ||
+        ui.isMenuOpen ||
+        ui.isCollectionOverlayOpen
+      ) {
+        lastSpacePressAt = 0;
+        return;
+      }
+
+      const isSpace = e.code === "Space" || e.key === " ";
+      if (!isSpace) {
+        lastSpacePressAt = 0;
+        return;
+      }
+
+      if (e.repeat || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) {
+        lastSpacePressAt = 0;
+        return;
+      }
+
+      if (isAnyTextInputActive(e)) {
+        lastSpacePressAt = 0;
+        return;
+      }
+
+      const now = performance.now();
+      if (lastSpacePressAt > 0 && now - lastSpacePressAt <= 380) {
+        lastSpacePressAt = 0;
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (ui.activeSuggestions.length === 1) {
+          applyClipboardSuggestion(ui.activeSuggestions[0]);
+        } else {
+          blinkActiveCapsules();
+        }
+      } else {
+        lastSpacePressAt = now;
+      }
+    };
+
+    window.addEventListener("keydown", onGlobalKeyDown);
+
+    ui.clipboardController = window.MNT_SmartClipboard.createController({
+      getEngine: detectActiveHomeForPage,
+      getSettings: () => currentSettings,
+      onSuggestion: showClipboardSuggestion
+    });
+
+    ui.clipboardController.syncWithSettings();
+
+    ui.cleanupFns.push(() => {
+      window.removeEventListener("keydown", onGlobalKeyDown);
+      clearTimeout(ui?.suggestionTimer);
+      if (ui?.clipboardController) {
+        ui.clipboardController.stop();
+      }
+    });
   }
 
   function renderBookmarksList() {
     if (!ui) return;
     ui.strip.innerHTML = "";
 
-    currentBookmarks.forEach((node) => {
+    const pendingUrls = ui.collectionsController?.getPendingCreationUrls?.() || [];
+    const orderedBookmarks = window.MNT_Collections
+      ? window.MNT_Collections.getVisibleBarBookmarks(currentBookmarks, currentSettings, pendingUrls)
+      : currentBookmarks;
+
+    const hasBookmarksAfter = orderedBookmarks.some(
+      (node) => (node && node.url && isSafeUrl(node.url)) || (node && node.children)
+    );
+
+    if (ui.collectionsController) {
+      ui.collectionsController.renderBarCollections(ui.strip, hasBookmarksAfter);
+    }
+
+    orderedBookmarks.forEach((node) => {
       if (node.url) {
         if (!isSafeUrl(node.url)) return;
 
@@ -614,6 +1512,9 @@
           span.textContent = node.title;
           link.appendChild(span);
         }
+        if (ui.collectionsController && node.id) {
+          ui.collectionsController.attachBookmarkBarDrag(link, node.id);
+        }
         ui.strip.appendChild(link);
       } else if (node.children) {
         const folderBtn = document.createElement("button");
@@ -631,6 +1532,9 @@
           openFolderMenu(folderBtn, node.children);
         });
 
+        if (ui.collectionsController && node.id) {
+          ui.collectionsController.attachBookmarkBarDrag(folderBtn, node.id);
+        }
         ui.strip.appendChild(folderBtn);
       }
     });
@@ -685,9 +1589,14 @@
     ui.isMenuOpen = true;
   }
 
-  function renderSettingsMenu() {
+  function renderSettingsMenu(keepEngineSubmenuOpen = false) {
     if (!ui) return;
+    ui.collectionsController?.closeItemActionsMenu();
+    ui.isEditingCustomSiteUrl = false;
+    ui.settingsMenu.classList.remove("collections-screen", "clipboard-screen");
     ui.settingsMenu.innerHTML = "";
+
+    const customActive = isCustomHomeActive();
 
     const searchEngineOptions = [
       { id: "google", label: "Google" },
@@ -710,20 +1619,28 @@
     ];
 
     const engineRow = document.createElement("div");
-    engineRow.className = "menu-row has-submenu";
+    engineRow.className = "menu-row has-submenu engine-home-row";
+    if (keepEngineSubmenuOpen === true) {
+      engineRow.classList.add("open");
+    }
     engineRow.innerHTML = `
       <div class="menu-row-left">
         <span class="check-slot"></span>
-        <span>Definir buscador padrão</span>
+        <span>${customActive ? "Definir home padrão" : "Definir buscador padrão"}</span>
       </div>
       ${ICONS.chevronRight}
     `;
 
     const engineSubmenu = document.createElement("div");
-    engineSubmenu.className = "submenu";
+    engineSubmenu.className = "submenu submenu-stack";
+
+    // Caixa 1: Buscadores clássicos e IAs pré-definidas
+    const predefinedCard = document.createElement("div");
+    predefinedCard.className = "submenu-card";
 
     const createEngineOptionBtn = (opt) => {
       const btn = document.createElement("button");
+      btn.type = "button";
       btn.className = "menu-row";
       const isSelected = currentSettings.engine === opt.id;
       btn.innerHTML = `
@@ -734,10 +1651,14 @@
       `;
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
-        saveSetting({ engine: opt.id }, () => {
+        chrome.runtime.sendMessage({ action: "selectHomeEngine", engineId: opt.id }, (resp) => {
+          if (resp && resp.settings) {
+            currentSettings = resp.settings;
+          }
           closeAllMenus();
-          if (enginesMap[opt.id] && isSafeUrl(enginesMap[opt.id])) {
-            window.location.href = enginesMap[opt.id];
+          const destUrl = resp?.targetUrl || enginesMap[opt.id];
+          if (destUrl && isSafeUrl(destUrl)) {
+            window.location.href = destUrl;
           }
         });
       });
@@ -745,18 +1666,222 @@
     };
 
     searchEngineOptions.forEach((opt) => {
-      engineSubmenu.appendChild(createEngineOptionBtn(opt));
+      predefinedCard.appendChild(createEngineOptionBtn(opt));
     });
 
     const engineGroupDivider = document.createElement("div");
     engineGroupDivider.className = "menu-divider";
-    engineSubmenu.appendChild(engineGroupDivider);
+    predefinedCard.appendChild(engineGroupDivider);
 
     aiEngineOptions.forEach((opt) => {
-      engineSubmenu.appendChild(createEngineOptionBtn(opt));
+      predefinedCard.appendChild(createEngineOptionBtn(opt));
     });
 
+    // Caixa 2 (separada abaixo): + Adicionar outro site + campo de URL + lista de sites personalizados
+    const customCard = document.createElement("div");
+    customCard.className = "submenu-card";
+
+    const addSiteBtn = document.createElement("button");
+    addSiteBtn.type = "button";
+    addSiteBtn.className = "menu-row";
+    addSiteBtn.innerHTML = `
+      <div class="menu-row-left">
+        <span class="check-slot">${ICONS.plus}</span>
+        <span>Adicionar outro site</span>
+      </div>
+    `;
+
+    const formWrap = document.createElement("div");
+    formWrap.className = "custom-site-form";
+
+    const urlInput = document.createElement("input");
+    urlInput.type = "text";
+    urlInput.className = "custom-site-input";
+    urlInput.placeholder = "Cole a URL (ex: trello.com)";
+    urlInput.spellcheck = false;
+    urlInput.autocomplete = "off";
+
+    const submitBtn = document.createElement("button");
+    submitBtn.type = "button";
+    submitBtn.className = "custom-site-submit";
+    submitBtn.title = "Definir como home";
+    submitBtn.innerHTML = ICONS.arrowRight;
+
+    const collapseCustomSiteInput = () => {
+      formWrap.classList.remove("open");
+      if (ui) ui.isEditingCustomSiteUrl = false;
+      urlInput.value = "";
+      urlInput.classList.remove("invalid");
+    };
+
+    let isSubmittingCustomSite = false;
+    const submitCustomSite = () => {
+      if (isSubmittingCustomSite) return;
+      const rawVal = urlInput.value.trim();
+      if (!rawVal) {
+        urlInput.classList.add("invalid");
+        urlInput.focus();
+        return;
+      }
+      isSubmittingCustomSite = true;
+      chrome.runtime.sendMessage({ action: "addAndSelectCustomSite", rawUrl: rawVal }, (resp) => {
+        isSubmittingCustomSite = false;
+        if (chrome.runtime.lastError || !resp || !resp.ok) {
+          urlInput.classList.add("invalid");
+          urlInput.focus();
+          return;
+        }
+        if (resp.settings) {
+          currentSettings = resp.settings;
+        }
+        closeAllMenus();
+        if (resp.targetUrl && isSafeUrl(resp.targetUrl)) {
+          window.location.href = resp.targetUrl;
+        }
+      });
+    };
+
+    ["click", "mousedown", "pointerdown"].forEach((evtName) => {
+      formWrap.addEventListener(evtName, (e) => e.stopPropagation());
+    });
+
+    urlInput.addEventListener("contextmenu", (e) => {
+      e.stopPropagation();
+    });
+
+    urlInput.addEventListener("input", () => {
+      urlInput.classList.remove("invalid");
+    });
+
+    ["keydown", "keyup", "keypress"].forEach((evtName) => {
+      urlInput.addEventListener(evtName, (e) => {
+        e.stopPropagation();
+        if (evtName === "keydown") {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            submitCustomSite();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            collapseCustomSiteInput();
+            engineRow.classList.remove("open");
+          }
+        }
+      });
+    });
+
+    submitBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      submitCustomSite();
+    });
+
+    addSiteBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const willOpen = !formWrap.classList.contains("open");
+      if (willOpen) {
+        formWrap.classList.add("open");
+        engineRow.classList.add("open");
+        if (ui) ui.isEditingCustomSiteUrl = true;
+        urlInput.classList.remove("invalid");
+        requestAnimationFrame(() => urlInput.focus());
+      } else {
+        collapseCustomSiteInput();
+      }
+    });
+
+    formWrap.appendChild(urlInput);
+    formWrap.appendChild(submitBtn);
+
+    const customSitesListEl = document.createElement("div");
+    customSitesListEl.className = "custom-sites-list";
+
+    const populateCustomSitesList = () => {
+      customSitesListEl.textContent = "";
+      const sites = Array.isArray(currentSettings?.customSites) ? currentSettings.customSites : [];
+      sites.forEach((site) => {
+        if (!site || !site.id || !site.url) return;
+        const row = document.createElement("div");
+        row.className = "custom-site-row";
+
+        const selectBtn = document.createElement("button");
+        selectBtn.type = "button";
+        selectBtn.className = "custom-site-select";
+        selectBtn.title = site.url;
+
+        const checkSlot = document.createElement("span");
+        checkSlot.className = "check-slot";
+        checkSlot.innerHTML = currentSettings.engine === site.id ? ICONS.check : "";
+
+        const labelSpan = document.createElement("span");
+        labelSpan.className = "custom-site-label";
+        labelSpan.textContent = site.label || site.host || site.url;
+
+        selectBtn.appendChild(checkSlot);
+        selectBtn.appendChild(labelSpan);
+        selectBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          chrome.runtime.sendMessage({ action: "selectHomeEngine", engineId: site.id }, (resp) => {
+            if (!resp || !resp.ok) return;
+            if (resp.settings) {
+              currentSettings = resp.settings;
+            }
+            closeAllMenus();
+            if (resp.targetUrl && isSafeUrl(resp.targetUrl)) {
+              window.location.href = resp.targetUrl;
+            }
+          });
+        });
+
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.className = "custom-site-delete";
+        delBtn.title = "Remover site";
+        delBtn.innerHTML = ICONS.close;
+        delBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          engineRow.classList.add("open");
+          chrome.runtime.sendMessage({ action: "removeCustomSite", siteId: site.id }, (resp) => {
+            if (!resp || !resp.ok) return;
+            if (resp.settings) {
+              currentSettings = resp.settings;
+            }
+            if (resp.wasActive) {
+              closeAllMenus();
+              if (resp.fallbackUrl && isSafeUrl(resp.fallbackUrl)) {
+                window.location.href = resp.fallbackUrl;
+              } else {
+                evaluateActivation();
+              }
+            } else {
+              populateCustomSitesList();
+            }
+          });
+        });
+
+        row.appendChild(selectBtn);
+        row.appendChild(delBtn);
+        customSitesListEl.appendChild(row);
+      });
+    };
+
+    populateCustomSitesList();
+
+    customCard.appendChild(addSiteBtn);
+    customCard.appendChild(formWrap);
+    customCard.appendChild(customSitesListEl);
+
+    engineSubmenu.appendChild(predefinedCard);
+    engineSubmenu.appendChild(customCard);
     engineRow.appendChild(engineSubmenu);
+
+    const unpinEngineSubmenuOnSiblingHover = (siblingEl) => {
+      if (!siblingEl) return;
+      siblingEl.addEventListener("mouseenter", () => {
+        if (engineRow.classList.contains("open")) {
+          collapseCustomSiteInput();
+          engineRow.classList.remove("open");
+        }
+      });
+    };
 
     const visRow = document.createElement("div");
     visRow.className = "menu-row has-submenu";
@@ -773,23 +1898,45 @@
 
     visibilityOptions.forEach((opt) => {
       const btn = document.createElement("button");
-      btn.className = "menu-row";
-      const isSelected = currentSettings.barVisibility === opt.id;
-      btn.innerHTML = `
-        <div class="menu-row-left">
-          <span class="check-slot">${isSelected ? ICONS.check : ""}</span>
-          <span>${opt.label}</span>
-        </div>
-      `;
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        saveSetting({ barVisibility: opt.id }, () => {
-          renderSettingsMenu();
-          renderContextMenu();
-          updateBarVisibilityState();
-          closeAllMenus();
+      btn.type = "button";
+      const isUnavailableOnCustom = customActive && (opt.id === "home_only" || opt.id === "always");
+
+      if (isUnavailableOnCustom) {
+        btn.className = "menu-row disabled-row";
+        btn.setAttribute("aria-disabled", "true");
+        btn.title = "Indisponível em home personalizada";
+        btn.innerHTML = `
+          <div class="menu-row-left">
+            <span class="check-slot"></span>
+            <span>${opt.label}</span>
+          </div>
+        `;
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
         });
-      });
+      } else {
+        btn.className = "menu-row";
+        const isSelected = customActive ? opt.id === "never" : currentSettings.barVisibility === opt.id;
+        btn.innerHTML = `
+          <div class="menu-row-left">
+            <span class="check-slot">${isSelected ? ICONS.check : ""}</span>
+            <span>${opt.label}</span>
+          </div>
+        `;
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (customActive) {
+            closeAllMenus();
+            return;
+          }
+          saveSetting({ barVisibility: opt.id }, () => {
+            renderSettingsMenu();
+            renderContextMenu();
+            updateBarVisibilityState();
+            closeAllMenus();
+          });
+        });
+      }
       visSubmenu.appendChild(btn);
     });
     visRow.appendChild(visSubmenu);
@@ -798,19 +1945,58 @@
     divider1.className = "menu-divider";
 
     const accelBtn = document.createElement("button");
-    accelBtn.className = "menu-row";
-    accelBtn.innerHTML = `
+    accelBtn.type = "button";
+    if (customActive) {
+      accelBtn.className = "menu-row disabled-row";
+      accelBtn.setAttribute("aria-disabled", "true");
+      accelBtn.title = "Indisponível em home personalizada";
+      accelBtn.innerHTML = `
+        <div class="menu-row-left">
+          <span class="check-slot"></span>
+          <span>Aceleração da Home</span>
+        </div>
+      `;
+      accelBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+      });
+    } else {
+      accelBtn.className = "menu-row";
+      accelBtn.innerHTML = `
+        <div class="menu-row-left">
+          <span class="check-slot">${currentSettings.acceleration ? ICONS.check : ""}</span>
+          <span>Aceleração da Home</span>
+        </div>
+      `;
+      accelBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        saveSetting({ acceleration: !currentSettings.acceleration }, () => {
+          injectSpeculationRules();
+          renderSettingsMenu();
+          closeAllMenus();
+        });
+      });
+    }
+
+    const smartClipBtn = document.createElement("button");
+    smartClipBtn.type = "button";
+    smartClipBtn.className = "menu-row";
+    smartClipBtn.innerHTML = `
       <div class="menu-row-left">
-        <span class="check-slot">${currentSettings.acceleration ? ICONS.check : ""}</span>
-        <span>Aceleração da Home</span>
+        <span class="check-slot">${currentSettings.smartClipboard ? ICONS.check : ""}</span>
+        <span>Clipboard inteligente</span>
       </div>
     `;
-    accelBtn.addEventListener("click", (e) => {
+    smartClipBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      saveSetting({ acceleration: !currentSettings.acceleration }, () => {
-        injectSpeculationRules();
+      const nextState = !currentSettings.smartClipboard;
+      saveSetting({ smartClipboard: nextState }, () => {
+        if (!nextState) {
+          hideClipboardSuggestion();
+        }
+        if (ui && ui.clipboardController) {
+          ui.clipboardController.syncWithSettings();
+        }
         renderSettingsMenu();
-        closeAllMenus();
       });
     });
 
@@ -818,6 +2004,7 @@
     divider2.className = "menu-divider";
 
     const favManagerBtn = document.createElement("button");
+    favManagerBtn.type = "button";
     favManagerBtn.className = "menu-row";
     favManagerBtn.innerHTML = `
       <div class="menu-row-left">
@@ -832,6 +2019,7 @@
     });
 
     const aboutBtn = document.createElement("button");
+    aboutBtn.type = "button";
     aboutBtn.className = "menu-row menu-row-about";
     aboutBtn.textContent = "My New Tab";
     aboutBtn.addEventListener("click", (e) => {
@@ -839,34 +2027,379 @@
       renderAboutMenu();
     });
 
+    [visRow, accelBtn, smartClipBtn, favManagerBtn, aboutBtn].forEach(unpinEngineSubmenuOnSiblingHover);
+
     ui.settingsMenu.appendChild(engineRow);
     ui.settingsMenu.appendChild(visRow);
     ui.settingsMenu.appendChild(divider1);
     ui.settingsMenu.appendChild(accelBtn);
+    ui.settingsMenu.appendChild(smartClipBtn);
+
+    if (currentSettings.smartClipboard) {
+      const customizeClipBtn = document.createElement("button");
+      customizeClipBtn.type = "button";
+      customizeClipBtn.className = "menu-row";
+      customizeClipBtn.innerHTML = `
+        <div class="menu-row-left">
+          <span class="check-slot"></span>
+          <span>Personalizar</span>
+        </div>
+      `;
+      customizeClipBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        renderClipboardSettingsScreen();
+      });
+      unpinEngineSubmenuOnSiblingHover(customizeClipBtn);
+      ui.settingsMenu.appendChild(customizeClipBtn);
+    }
+
+    if (ui.collectionsController) {
+      const collectionsRow = ui.collectionsController.createSettingsCollectionsRow(ICONS.check);
+      unpinEngineSubmenuOnSiblingHover(collectionsRow);
+      ui.settingsMenu.appendChild(collectionsRow);
+    }
+
     ui.settingsMenu.appendChild(divider2);
     ui.settingsMenu.appendChild(favManagerBtn);
     ui.settingsMenu.appendChild(aboutBtn);
   }
 
+  function renderClipboardSettingsScreen() {
+    if (!ui) return;
+    ui.collectionsController?.closeItemActionsMenu();
+    ui.settingsMenu.classList.remove("collections-screen");
+    ui.settingsMenu.classList.add("clipboard-screen");
+    ui.settingsMenu.textContent = "";
+
+    // 1. Cabeçalho: < Clipboard Inteligente
+    const headerBtn = document.createElement("button");
+    headerBtn.type = "button";
+    headerBtn.className = "col-screen-header";
+    headerBtn.title = "Voltar para Mais opções";
+
+    const backIcon = document.createElement("span");
+    backIcon.className = "col-screen-back";
+    backIcon.innerHTML = ICONS.chevronLeft;
+
+    const headerTitle = document.createElement("span");
+    headerTitle.textContent = "Clipboard Inteligente";
+
+    headerBtn.appendChild(backIcon);
+    headerBtn.appendChild(headerTitle);
+    headerBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      renderSettingsMenu();
+    });
+    ui.settingsMenu.appendChild(headerBtn);
+
+    // 2. Descrição de privacidade e funcionamento local
+    const desc = document.createElement("div");
+    desc.className = "col-menu-desc";
+    desc.textContent =
+      "Sugestões inteligentes para a sua área de transferência na página inicial definida no navegador. Tudo é identificado localmente e nunca é enviado para servidores externos.";
+    ui.settingsMenu.appendChild(desc);
+
+    // 3. Espaço em branco antes das categorias
+    const topSpacer = document.createElement("div");
+    topSpacer.className = "col-menu-spacer";
+    ui.settingsMenu.appendChild(topSpacer);
+
+    // 4. Categoria: Abrir sugestão
+    const openSectionTitle = document.createElement("div");
+    openSectionTitle.className = "menu-section-title";
+    openSectionTitle.textContent = "Abrir sugestão";
+    ui.settingsMenu.appendChild(openSectionTitle);
+
+    const activeOpenMode = currentSettings.clipboardOpenMode || "new_tab";
+    const openModeOptions = [
+      { id: "current_tab", label: "Abrir na guia atual" },
+      { id: "new_tab", label: "Abrir em nova guia" }
+    ];
+
+    openModeOptions.forEach((opt) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "menu-row";
+      const isSelected = activeOpenMode === opt.id;
+      btn.innerHTML = `
+        <div class="menu-row-left">
+          <span class="check-slot">${isSelected ? ICONS.check : ""}</span>
+          <span>${opt.label}</span>
+        </div>
+      `;
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        saveSetting({ clipboardOpenMode: opt.id }, () => {
+          renderClipboardSettingsScreen();
+        });
+      });
+      ui.settingsMenu.appendChild(btn);
+    });
+
+    const div1 = document.createElement("div");
+    div1.className = "menu-divider";
+    ui.settingsMenu.appendChild(div1);
+
+    // 5. Categoria: Serviços preferidos (Mapas > e Dicionário >)
+    const servicesTitle = document.createElement("div");
+    servicesTitle.className = "menu-section-title";
+    servicesTitle.textContent = "Serviços preferidos";
+    ui.settingsMenu.appendChild(servicesTitle);
+
+    const createSubmenuServiceRow = (rowLabel, options, activeId, onSelect) => {
+      const row = document.createElement("div");
+      row.className = "menu-row has-submenu";
+
+      const left = document.createElement("div");
+      left.className = "menu-row-left";
+      const slot = document.createElement("span");
+      slot.className = "check-slot";
+      const lbl = document.createElement("span");
+      lbl.textContent = rowLabel;
+      left.appendChild(slot);
+      left.appendChild(lbl);
+
+      const arrowWrap = document.createElement("span");
+      arrowWrap.style.display = "inline-flex";
+      arrowWrap.innerHTML = ICONS.chevronRight;
+
+      row.appendChild(left);
+      row.appendChild(arrowWrap);
+
+      const sub = document.createElement("div");
+      sub.className = "submenu";
+
+      options.forEach((opt) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "menu-row";
+        const isSelected = activeId === opt.id;
+        btn.innerHTML = `
+          <div class="menu-row-left">
+            <span class="check-slot">${isSelected ? ICONS.check : ""}</span>
+            <span>${opt.label}</span>
+          </div>
+        `;
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          onSelect(opt.id);
+        });
+        sub.appendChild(btn);
+      });
+
+      row.appendChild(sub);
+      return row;
+    };
+
+    const mapRow = createSubmenuServiceRow(
+      "Mapas",
+      [
+        { id: "google", label: "Google Maps" },
+        { id: "bing", label: "Bing Maps" },
+        { id: "apple", label: "Apple Maps" }
+      ],
+      currentSettings.clipboardMapProvider || "google",
+      (selectedId) => {
+        saveSetting({ clipboardMapProvider: selectedId }, () => {
+          renderClipboardSettingsScreen();
+        });
+      }
+    );
+    ui.settingsMenu.appendChild(mapRow);
+
+    const dictRow = createSubmenuServiceRow(
+      "Dicionário",
+      [
+        { id: "dicio", label: "Dicio" },
+        { id: "sinonimos", label: "Sinônimos" },
+        { id: "linguee", label: "Linguee" }
+      ],
+      currentSettings.clipboardDictProvider || "dicio",
+      (selectedId) => {
+        saveSetting({ clipboardDictProvider: selectedId }, () => {
+          renderClipboardSettingsScreen();
+        });
+      }
+    );
+    ui.settingsMenu.appendChild(dictRow);
+
+    const div2 = document.createElement("div");
+    div2.className = "menu-divider";
+    ui.settingsMenu.appendChild(div2);
+
+    // 6. Categoria: Sugestões (Todas + filtro individual + Desativar função + Atalho)
+    const suggestionsTitle = document.createElement("div");
+    suggestionsTitle.className = "menu-section-title";
+    suggestionsTitle.textContent = "Sugestões";
+    ui.settingsMenu.appendChild(suggestionsTitle);
+
+    const allCategoriesActive = currentSettings.clipboardAllCategories !== false;
+
+    const allBtn = document.createElement("button");
+    allBtn.type = "button";
+    allBtn.className = "menu-row";
+    allBtn.innerHTML = `
+      <div class="menu-row-left">
+        <span class="check-slot">${allCategoriesActive ? ICONS.check : ""}</span>
+        <span>Todas</span>
+      </div>
+    `;
+    allBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      saveSetting({ clipboardAllCategories: !allCategoriesActive }, () => {
+        renderClipboardSettingsScreen();
+      });
+    });
+    ui.settingsMenu.appendChild(allBtn);
+
+    if (!allCategoriesActive) {
+      const customActive = isCustomHomeActive();
+      const defaultCats = { colar: true, site: true, code: true, maps: true, dict: true };
+      const currentCats = {
+        ...defaultCats,
+        ...(currentSettings.clipboardCategories || {})
+      };
+
+      const categoryItems = [
+        { key: "colar", label: "Colar" },
+        { key: "site", label: "Site" },
+        { key: "code", label: "Code (somente IA)" },
+        { key: "maps", label: "Mapa" },
+        { key: "dict", label: "Dicionário" }
+      ];
+
+      categoryItems.forEach((cat) => {
+        const isIncompatibleOnCustom = customActive && (cat.key === "colar" || cat.key === "code");
+        const isCatOn = !isIncompatibleOnCustom && currentCats[cat.key] !== false;
+        const catBtn = document.createElement("button");
+        catBtn.type = "button";
+
+        if (isIncompatibleOnCustom) {
+          catBtn.className = "menu-row disabled-row";
+          catBtn.setAttribute("aria-disabled", "true");
+          catBtn.title = "Indisponível em home personalizada";
+          catBtn.innerHTML = `
+            <div class="menu-row-left">
+              <span class="check-slot"></span>
+              <span>${cat.label}</span>
+            </div>
+          `;
+          catBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+          });
+        } else {
+          catBtn.className = "menu-row";
+          catBtn.innerHTML = `
+            <div class="menu-row-left">
+              <span class="check-slot">${isCatOn ? ICONS.check : ""}</span>
+              <span>${cat.label}</span>
+            </div>
+          `;
+          catBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const updatedCats = { ...currentCats, [cat.key]: !isCatOn };
+            saveSetting({ clipboardCategories: updatedCats }, () => {
+              if (isCatOn && ui.activeSuggestions.length > 0) {
+                const remaining = ui.activeSuggestions.filter((s) => updatedCats[s.category] !== false);
+                if (remaining.length === 0) {
+                  hideClipboardSuggestion();
+                } else if (remaining.length !== ui.activeSuggestions.length) {
+                  showClipboardSuggestion(remaining);
+                }
+              }
+              renderClipboardSettingsScreen();
+            });
+          });
+        }
+        ui.settingsMenu.appendChild(catBtn);
+      });
+    }
+
+    const disableBtn = document.createElement("button");
+    disableBtn.type = "button";
+    disableBtn.className = "menu-row danger-row";
+    disableBtn.innerHTML = `
+      <div class="menu-row-left">
+        <span class="check-slot"></span>
+        <span>Desativar função</span>
+      </div>
+    `;
+    disableBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      saveSetting({ smartClipboard: false }, () => {
+        hideClipboardSuggestion();
+        if (ui && ui.clipboardController) {
+          ui.clipboardController.syncWithSettings();
+        }
+        renderSettingsMenu();
+      });
+    });
+    ui.settingsMenu.appendChild(disableBtn);
+
+    const shortcutSpacer = document.createElement("div");
+    shortcutSpacer.className = "col-menu-spacer";
+    ui.settingsMenu.appendChild(shortcutSpacer);
+
+    const shortcutActive = currentSettings.clipboardShortcut !== false;
+    const shortcutBtn = document.createElement("button");
+    shortcutBtn.type = "button";
+    shortcutBtn.className = "menu-row";
+
+    const shortcutLeft = document.createElement("div");
+    shortcutLeft.className = "menu-row-left";
+    const shortcutCheck = document.createElement("span");
+    shortcutCheck.className = "check-slot";
+    shortcutCheck.innerHTML = shortcutActive ? ICONS.check : "";
+    const shortcutLabel = document.createElement("span");
+    shortcutLabel.textContent = "Atalho de preenchimento";
+    shortcutLeft.appendChild(shortcutCheck);
+    shortcutLeft.appendChild(shortcutLabel);
+
+    const shortcutBadge = document.createElement("span");
+    shortcutBadge.className = "shortcut-badge";
+    shortcutBadge.textContent = "Espaço 2x";
+
+    shortcutBtn.appendChild(shortcutLeft);
+    shortcutBtn.appendChild(shortcutBadge);
+    shortcutBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      saveSetting({ clipboardShortcut: !shortcutActive }, () => {
+        renderClipboardSettingsScreen();
+      });
+    });
+    ui.settingsMenu.appendChild(shortcutBtn);
+  }
+
   function renderAboutMenu() {
     if (!ui) return;
+    ui.collectionsController?.closeItemActionsMenu();
+    ui.settingsMenu.classList.remove("collections-screen", "clipboard-screen");
     ui.settingsMenu.textContent = "";
 
     const version = chrome.runtime.getManifest?.()?.version || "2.0";
 
-    const header = document.createElement("div");
-    header.className = "about-header";
+    const headerBtn = document.createElement("button");
+    headerBtn.type = "button";
+    headerBtn.className = "col-screen-header";
+    headerBtn.title = "Voltar para Mais opções";
 
-    const title = document.createElement("div");
-    title.className = "about-title";
+    const backIcon = document.createElement("span");
+    backIcon.className = "col-screen-back";
+    backIcon.innerHTML = ICONS.chevronLeft;
+
+    const title = document.createElement("span");
     title.textContent = `My New Tab ${version}`;
+
+    headerBtn.appendChild(backIcon);
+    headerBtn.appendChild(title);
+    headerBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      renderSettingsMenu();
+    });
 
     const author = document.createElement("div");
     author.className = "about-author";
     author.textContent = "Criado por Guilherme Silveira";
-
-    header.appendChild(title);
-    header.appendChild(author);
 
     const divider = document.createElement("div");
     divider.className = "menu-divider";
@@ -891,7 +2424,8 @@
       closeAllMenus();
     });
 
-    ui.settingsMenu.appendChild(header);
+    ui.settingsMenu.appendChild(headerBtn);
+    ui.settingsMenu.appendChild(author);
     ui.settingsMenu.appendChild(divider);
     ui.settingsMenu.appendChild(linkedinLink);
     ui.settingsMenu.appendChild(githubLink);
@@ -919,8 +2453,15 @@
     divider.className = "menu-divider";
 
     ui.contextMenu.appendChild(editFavBtn);
+
+    if (ui.collectionsController) {
+      const colRows = ui.collectionsController.createBarContextMenuItems(ICONS.check);
+      colRows.forEach((r) => ui.contextMenu.appendChild(r));
+    }
+
     ui.contextMenu.appendChild(divider);
 
+    const customActive = isCustomHomeActive();
     const quickModes = [
       { id: "home_only", label: "Mostrar somente no início" },
       { id: "always", label: "Sempre mostrar" },
@@ -929,47 +2470,88 @@
 
     quickModes.forEach((m) => {
       const row = document.createElement("button");
-      row.className = "menu-row";
-      const checked = currentSettings.barVisibility === m.id;
-      row.innerHTML = `
-        <div class="menu-row-left">
-          <span class="check-slot">${checked ? ICONS.check : ""}</span>
-          <span>${m.label}</span>
-        </div>
-      `;
-      row.addEventListener("click", (e) => {
-        e.stopPropagation();
-        saveSetting({ barVisibility: m.id }, () => {
-          renderSettingsMenu();
-          renderContextMenu();
-          updateBarVisibilityState();
-          closeAllMenus();
+      row.type = "button";
+      const isUnavailableOnCustom = customActive && (m.id === "home_only" || m.id === "always");
+
+      if (isUnavailableOnCustom) {
+        row.className = "menu-row disabled-row";
+        row.setAttribute("aria-disabled", "true");
+        row.title = "Indisponível em home personalizada";
+        row.innerHTML = `
+          <div class="menu-row-left">
+            <span class="check-slot"></span>
+            <span>${m.label}</span>
+          </div>
+        `;
+        row.addEventListener("click", (e) => {
+          e.stopPropagation();
         });
-      });
+      } else {
+        row.className = "menu-row";
+        const checked = customActive ? m.id === "never" : currentSettings.barVisibility === m.id;
+        row.innerHTML = `
+          <div class="menu-row-left">
+            <span class="check-slot">${checked ? ICONS.check : ""}</span>
+            <span>${m.label}</span>
+          </div>
+        `;
+        row.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (customActive) {
+            closeAllMenus();
+            return;
+          }
+          saveSetting({ barVisibility: m.id }, () => {
+            renderSettingsMenu();
+            renderContextMenu();
+            updateBarVisibilityState();
+            closeAllMenus();
+          });
+        });
+      }
       ui.contextMenu.appendChild(row);
     });
   }
 
   function saveSetting(partial, callback) {
     currentSettings = { ...currentSettings, ...partial };
-    chrome.runtime.sendMessage({ action: "updateSettings", newSettings: partial }, () => {
-      if (callback) callback();
+    chrome.runtime.sendMessage({ action: "updateSettings", newSettings: partial }, (resp) => {
+      if (resp && resp.ok) {
+        if (resp.settings) {
+          currentSettings = { ...currentSettings, ...resp.settings };
+        }
+        if (Array.isArray(resp.items)) {
+          currentBookmarks = resp.items;
+        }
+      }
+      if (callback) callback(resp);
     });
   }
 
-  function closeAllMenus() {
+  function closeHostMenusOnly() {
     if (!ui) return;
-    ui.settingsMenu.classList.remove("open");
+    ui.collectionsController?.closeItemActionsMenu();
+    ui.isEditingCustomSiteUrl = false;
+    ui.settingsMenu.classList.remove("open", "collections-screen", "clipboard-screen");
     ui.contextMenu.classList.remove("open");
     ui.folderDropdown.classList.remove("open");
     ui.moreBtn.classList.remove("active");
     ui.strip.querySelectorAll(".item.active").forEach((el) => el.classList.remove("active"));
     ui.isMenuOpen = false;
+  }
+
+  function closeAllMenus() {
+    if (!ui) return;
+    closeHostMenusOnly();
+    if (ui.collectionsController) {
+      ui.collectionsController.closeAllCollectionOverlays();
+    }
     updateBarVisibilityState();
   }
 
   function shouldBarBeDocked() {
     if (!currentSettings) return false;
+    if (isCustomHomeActive()) return false;
     if (currentSettings.barVisibility === "always") return true;
     if (currentSettings.barVisibility === "never") return false;
     return isSearchHomePage();
@@ -1108,7 +2690,7 @@
     } else {
       ui.pageStyle.textContent = "";
       clearFixedTopAttributes();
-      if (ui.isHoverRevealed || ui.isMenuOpen) {
+      if (ui.isHoverRevealed || ui.isMenuOpen || ui.isCollectionOverlayOpen || ui.isSuggestionRevealed) {
         ui.wrapper.classList.remove("hidden");
         ui.wrapper.classList.add("floating-open");
       } else {
@@ -1144,7 +2726,7 @@
       e.stopPropagation();
       closeAllMenus();
       renderContextMenu();
-      ui.contextMenu.style.top = `${Math.min(e.clientY, window.innerHeight - 180)}px`;
+      ui.contextMenu.style.top = `${Math.min(e.clientY, window.innerHeight - 245)}px`;
       ui.contextMenu.style.left = `${Math.min(e.clientX, window.innerWidth - 250)}px`;
       ui.contextMenu.classList.add("open");
       ui.isMenuOpen = true;
@@ -1163,14 +2745,14 @@
             updateBarVisibilityState();
           }, 40);
         }
-      } else if (ui.isHoverRevealed && e.clientY > 46 && !ui.isMenuOpen) {
+      } else if (ui.isHoverRevealed && e.clientY > 46 && !ui.isMenuOpen && !ui.isCollectionOverlayOpen) {
         clearTimeout(hoverTimer);
         ui.isHoverRevealed = false;
         updateBarVisibilityState();
       }
     };
 
-    window.addEventListener("mousemove", onWindowMouseMove, { passive: true });
+    window.addEventListener("mousemove", onWindowMouseMove, { capture: true, passive: true });
 
     ui.wrapper.addEventListener("mouseenter", () => {
       clearTimeout(hoverTimer);
@@ -1179,14 +2761,15 @@
     });
 
     ui.wrapper.addEventListener("mouseleave", (e) => {
-      if (!ui.isMenuOpen && e.clientY > 34) {
+      if (!ui.isMenuOpen && !ui.isCollectionOverlayOpen && e.clientY > 34) {
         ui.isHoverRevealed = false;
         updateBarVisibilityState();
       }
     });
 
     const onDocumentClick = () => {
-      if (ui && ui.isMenuOpen) closeAllMenus();
+      if (ui?.collectionsController?.shouldIgnoreOutsideClick?.()) return;
+      if (ui && (ui.isMenuOpen || ui.isCollectionOverlayOpen)) closeAllMenus();
       if (ui && shouldBarBeDocked()) {
         clearTimeout(clickAdjustTimer);
         clickAdjustTimer = setTimeout(adjustFixedTopElements, 60);
@@ -1233,7 +2816,7 @@
       clearTimeout(scrollSettleTimer);
       clearInterval(urlIntervalId);
       if (scrollRafId) cancelAnimationFrame(scrollRafId);
-      window.removeEventListener("mousemove", onWindowMouseMove);
+      window.removeEventListener("mousemove", onWindowMouseMove, { capture: true });
       window.removeEventListener("popstate", checkUrlChange);
       window.removeEventListener("scroll", onLayoutShiftOrScroll);
       window.removeEventListener("resize", onLayoutShiftOrScroll);
@@ -1315,7 +2898,7 @@
 
       // Se for idêntico ao que já foi carregado da memória, mantém intacto sem repintar
       if (ui.appliedTheme === detectedTheme && ui.appliedBgBar === detectedBgBar) {
-        const engine = detectCurrentEngine();
+        const engine = detectActiveHomeForPage();
         const cached = engine ? currentSettings?.themeCache?.[engine] : null;
         if (!cached || cached.theme !== detectedTheme || cached.bgBar !== detectedBgBar) {
           memorizeTheme({ theme: detectedTheme, bgBar: detectedBgBar });
@@ -1384,14 +2967,14 @@
   // CAMADA 3 DE ACELERAÇÃO: Speculation Rules API (ativa ao sair da Home para manter a volta instantânea)
   function injectSpeculationRules() {
     const existing = document.getElementById("mnt-speculation-rules");
-    if (!currentSettings?.acceleration || isSearchHomePage()) {
+    if (!currentSettings?.acceleration || isCustomHomeActive() || isSearchHomePage()) {
       if (existing) existing.remove();
       return;
     }
     if (existing) return;
 
     const appendRules = () => {
-      if (!currentSettings?.acceleration || isSearchHomePage()) return;
+      if (!currentSettings?.acceleration || isCustomHomeActive() || isSearchHomePage()) return;
       if (!document.head || document.getElementById("mnt-speculation-rules")) return;
       const specScript = document.createElement("script");
       specScript.id = "mnt-speculation-rules";

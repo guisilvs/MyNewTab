@@ -28,11 +28,34 @@ try {
   if (cachedBg) applyCanvasColor(cachedBg);
 } catch (e) {}
 
-chrome.storage.local.get({ engine: "google", acceleration: true, themeCache: {} }, (res) => {
-  const engineKey = Object.prototype.hasOwnProperty.call(ENGINES, res.engine) ? res.engine : "google";
-  const target = ENGINES[engineKey];
+function isSafeHttpsUrl(rawUrl) {
+  if (typeof rawUrl !== "string") return false;
+  try {
+    const parsed = new URL(rawUrl);
+    return parsed.protocol === "https:";
+  } catch (e) {
+    return false;
+  }
+}
 
-  const cachedTheme = res.themeCache && res.themeCache[engineKey];
+chrome.storage.local.get({ engine: "google", customSites: [], acceleration: true, themeCache: {} }, (res) => {
+  let activeKey = "google";
+  let target = ENGINES.google;
+  let isPredefined = true;
+
+  if (typeof res.engine === "string" && Object.prototype.hasOwnProperty.call(ENGINES, res.engine)) {
+    activeKey = res.engine;
+    target = ENGINES[activeKey];
+  } else if (typeof res.engine === "string" && res.engine.startsWith("custom_") && Array.isArray(res.customSites)) {
+    const found = res.customSites.find((s) => s && s.id === res.engine && isSafeHttpsUrl(s.url));
+    if (found) {
+      activeKey = found.id;
+      target = found.url;
+      isPredefined = false;
+    }
+  }
+
+  const cachedTheme = res.themeCache && res.themeCache[activeKey];
   if (cachedTheme && cachedTheme.bgBar) {
     applyCanvasColor(cachedTheme.bgBar);
     try {
@@ -40,7 +63,7 @@ chrome.storage.local.get({ engine: "google", acceleration: true, themeCache: {} 
     } catch (e) {}
   }
 
-  if (res.acceleration && document.head) {
+  if (isPredefined && res.acceleration && document.head) {
     const link = document.createElement("link");
     link.rel = "preconnect";
     link.href = new URL(target).origin;
@@ -48,8 +71,8 @@ chrome.storage.local.get({ engine: "google", acceleration: true, themeCache: {} 
     document.head.appendChild(link);
   }
 
-  chrome.runtime.sendMessage({ action: "redirectNewTab" }, (res) => {
-    if (chrome.runtime.lastError || !res || !res.ok) {
+  chrome.runtime.sendMessage({ action: "redirectNewTab" }, (resp) => {
+    if (chrome.runtime.lastError || !resp || !resp.ok) {
       window.location.replace(target);
     }
   });

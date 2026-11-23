@@ -4,7 +4,7 @@
 
 <h1 align="center">My New Tab</h1>
 
-Extensão **Manifest V3** para **Microsoft Edge** e **Google Chrome** que redefine a experiência de Nova Guia: permite escolher seu buscador tradicional ou assistente de IA preferido como página inicial, mantendo uma **barra de favoritos inteligente, ultrarrápida e visualmente nativa** ao navegador.
+Extensão **Manifest V3** para **Microsoft Edge** e **Google Chrome** que redefine a experiência de Nova Guia: permite escolher seu buscador tradicional, assistente de IA ou **qualquer site personalizado** como página inicial, mantendo uma **barra de favoritos inteligente, ultrarrápida e visualmente nativa** ao navegador.
 
 
 
@@ -37,15 +37,18 @@ Mais do que gerar código rápido, a metodologia adotada aqui foi o **Vibe Codin
 
 ## Mecanismos e Princípios de Engenharia Adotados
 
-### 1. Hub de Buscadores Tradicionais e Homes de IA
-No menu da barra (**Mais opções → Definir buscador padrão**), o usuário alterna instantaneamente sua Home entre duas categorias separadas visualmente:
+### 1. Hub de Buscadores, Homes de IA e Sites Personalizados
+No menu da barra (**Mais opções → Definir buscador padrão / Definir home padrão**), o usuário alterna instantaneamente sua Home entre:
 - **Buscadores Tradicionais**: Google, DuckDuckGo, Yahoo Search e Brave Search.
 - **Assistentes de IA**: Google Gemini, Claude, ChatGPT e Perplexity.
+- **Qualquer Página Personalizada (`+ Adicionar outro site`)**: em uma caixa dedicada logo abaixo, o usuário pode colar a URL de qualquer site (`trello.com`, `g1.com`, `wordpress.com`, etc.) para montar sua própria lista de homes rápidas sob `https://`.
 
-A extensão identifica de forma inteligente quando o usuário está na **Home** (início da busca ou tela de novo chat nas IAs) versus quando já iniciou uma pesquisa ou conversa, permitindo configurar a visibilidade da barra como:
+Nos 8 mecanismos pré-configurados, a extensão identifica de forma inteligente quando o usuário está na **Home** versus quando já iniciou uma pesquisa ou conversa, permitindo configurar a visibilidade da barra como:
 - **Mostrar somente no início** (fica fixa na Home e recolhe automaticamente nos resultados/respostas do chat);
 - **Sempre mostrar** (fixa tanto na Home quanto nos resultados/chats);
 - **Nunca mostrar** (recolhida, revelando-se suavemente apenas ao encostar o cursor no topo da tela).
+
+Em **homes personalizadas**, para preservar 100% da integridade de layout e performance de qualquer aplicação web arbitrária, as opções de barra fixa e Aceleração da Home ficam automaticamente indisponíveis, mantendo a barra acessível ao aproximar o cursor da borda superior da tela e descendo suavemente sempre que houver sugestões compatíveis do Clipboard Inteligente (`Site`, `Mapa` e `Dicionário`).
 
 ### 2. Aceleração da Home em 3 Camadas + Foco Limpo na Página
 Para eliminar o atraso típico de extensões de redirecionamento e o bug nativo do Chromium que seleciona toda a URL na barra de endereço ao abrir uma Nova Guia:
@@ -61,6 +64,22 @@ Mecanismos como o Google usam tons específicos de cinza-azulado no modo escuro,
 ### 4. Layout Não-Intrusivo e Compatibilidade Multi-Navegador
 - **Empurrar em vez de Sobrepor**: Quando a barra está fixa no topo, ela reserva `34px` reais acima da página e ajusta dinamicamente cabeçalhos `fixed`/`sticky` durante a rolagem, restaurando o posicionamento original assim que o usuário retorna ao topo da página de resultados.
 - **Detecção Automática Edge / Chrome**: Na primeira inicialização, a extensão detecta automaticamente o navegador para configurar o atalho **Editar favoritos...** para `edge://favorites/` no Microsoft Edge ou `chrome://bookmarks/` no Google Chrome, sem qualquer custo de performance.
+
+### 5. Clipboard Inteligente (Sensível ao Contexto e ao Mecanismo)
+Ativo por padrão e arquitetado em arquivo dedicado (`smart-clipboard.js`) por transparência, o recurso analisa localmente e de forma assíncrona novos itens copiados pelo usuário para oferecer ações rápidas em cápsulas iluminadas no centro da barra — sem jamais enviar dados para servidores externos. Em **Mais opções → Personalizar**, o usuário configura abertura (nova guia ou guia atual), serviços preferidos, quais categorias deseja receber e o atalho rápido:
+- **Categorias Inteligentes**:
+  - `Site`: identifica URLs puras ou inseridas em mensagens curtas e oferece abertura rápida.
+  - `Mapa`: extrai endereços físicos puros ou dentro de frases conversacionais (ex: *"me encontre aqui na av. marechal castelo branco"*) e abre diretamente no provedor escolhido (**Google Maps**, **Bing Maps** ou **Apple Maps**).
+  - `Code`: identifica trechos de código-fonte com detecção generalista de alta precisão nas primeiras linhas (Python, Java, Go, HTML, CSS, JavaScript, SQL e linguagens similares, sem custo de memória em arquivos grandes) e sugere colar **exclusivamente** quando o mecanismo ativo é uma IA.
+  - `Dicionário` + `Colar` (Palavra única): ao copiar uma única palavra, exibe duas cápsulas lado a lado para consultar no dicionário preferido (**Dicio**, **Sinônimos** ou **Linguee**) ou colar diretamente no buscador/IA.
+  - `Colar`: diferencia automaticamente pesquisas curtas/médias de buscadores (respeitando o limite técnico de 32 palavras do Google) de prompts elaborados e textos extensos/artigos (compreendidos já nas primeiras linhas sem custo de memória e oferecidos exclusivamente para ferramentas de IA, nunca em buscadores convencionais).
+- **Atalho Rápido (`Espaço 2x`), Colagem Não-Destrutiva e Memória de Análise**: Sem nenhum campo de texto focado, pressionar **Espaço duas vezes** aciona instantaneamente a sugestão exibida (ou sinaliza sutilmente quando há duas opções para escolha). Ao colar no buscador ou na IA, o texto já digitado é sempre preservado ao início sem envio automático, e apenas uma assinatura hash (`FNV-1a`) é salva para nunca repetir a mesma sugestão ou gravar textos copiados em disco.
+
+### 6. Coleções e Sincronização Inteligente de Pastas (Não-Destrutiva)
+Para organizar dezenas de favoritos sem poluir a barra nem alterar os favoritos originais do navegador, o módulo dedicado de **Coleções** (`collections.js`) combina curadoria visual com sincronização inteligente:
+- **Sincronização Automática com Pastas do Navegador**: Ativa por padrão no Edge e no Chrome (**Mais opções → Coleções → Sincronizar com suas pastas**, que ao ser desmarcada alterna para **Sincronizar somente "Barra de favoritos"**, sem as pastas), replica automaticamente as pastas de favoritos em Coleções coloridas na barra em modo estritamente *read-only* (jamais modifica ou move os favoritos reais do navegador).
+- **Personalização Inteligente sem Conflitos**: O usuário pode renomear uma coleção sincronizada, definir emoji e cor, reordenar itens ou mover favoritos entre coleções e para a barra do My New Tab — a sincronização reconhece cada personalização feita no My New Tab e nunca a desfaz quando novos sites são adicionados à pasta original (oferecendo também pausar/retomar a sincronização por coleção ou **Desfazer alterações (ressincronizar)** a qualquer momento). Se um site for desfavoritado no navegador, ele é removido imediatamente.
+- **Drag & Drop Fluido**: Permite criar coleções arrastando um favorito sobre outro, soltar favoritos diretamente sobre qualquer coleção na barra e reordenar livremente coleções e favoritos.
 
 
 
