@@ -571,7 +571,7 @@
         font-weight: 400;
         font-style: normal;
         letter-spacing: normal;
-        line-height: 1;
+        line-height: 1.35;
       }
 
       .item:hover, .item.active {
@@ -593,6 +593,7 @@
         overflow: hidden;
         text-overflow: ellipsis;
         font-family: var(--mnt-font);
+        line-height: 1.35;
       }
 
       .more-btn {

@@ -234,7 +234,7 @@
       .collection-pill-name {
         overflow: hidden;
         text-overflow: ellipsis;
-        line-height: 1.15;
+        line-height: 1.35;
       }
 
       .collection-pill-inline-input {
@@ -466,6 +466,7 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        line-height: 1.35;
       }
 
       .col-emoji-popover {
